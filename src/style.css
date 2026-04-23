@@ -1,37 +1,359 @@
 @import "tailwindcss";
 
-@keyframes twinkle {
-  0%, 100% { opacity: 0.15; transform: scale(1); }
-  50%       { opacity: 1;    transform: scale(1.5); }
+/* ═══════════════════════════════════════════════════════════════════════════
+   THEME — change --accent-rgb to shift glow colours site-wide
+   Format: R, G, B  (used inside rgba() calls below)
+═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --accent-rgb: 255, 255, 255;
 }
 
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50%       { transform: translateY(-5px); }
+/* ═══════════════════════════════════════════════════════════════════════════
+   STARFIELD
+═══════════════════════════════════════════════════════════════════════════ */
+
+@keyframes moveStars {
+  from { transform: translateY(0px); }
+  to   { transform: translateY(-2000px); }
 }
 
-.star { animation: twinkle var(--dur, 3s) ease-in-out infinite; }
-
-.brand-glow {
-  text-shadow:
-    0 0 20px rgba(220, 38, 38, 0.9),
-    0 0 50px rgba(220, 38, 38, 0.5),
-    0 0 90px rgba(220, 38, 38, 0.25);
+.stars-wrap {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  background: #000000;
 }
 
-.nav-pill {
-  transition: background-color 0.2s, transform 0.2s;
-}
-.nav-pill:hover {
-  background-color: rgba(255,255,255,0.12);
-  transform: scale(1.08);
+.stars-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: transparent;
+  border-radius: 50%;
 }
 
-.quick-card {
-  transition: transform 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+.stars-layer::after {
+  content: '';
+  position: absolute;
+  top: 2000px;
+  left: 0;
+  width: inherit;
+  height: inherit;
+  border-radius: 50%;
+  box-shadow: inherit;
 }
-.quick-card:hover {
-  transform: scale(1.05);
-  background-color: rgba(255,255,255,0.1);
-  box-shadow: 0 0 20px rgba(255,255,255,0.06);
+
+#stars1 {
+  width: 1px;
+  height: 1px;
+  animation: moveStars 90s linear infinite;
 }
+
+#stars2 {
+  width: 2px;
+  height: 2px;
+  animation: moveStars 45s linear infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SKELETON LOADERS
+   .skeleton-inner = the shimmering slot
+   ::after = the gradient sweep that moves across it left → right
+═══════════════════════════════════════════════════════════════════════════ */
+
+@keyframes shimmer {
+  0%   { transform: translateX(-150%); }
+  100% { transform: translateX(150%); }
+}
+
+.skeleton-inner {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 0.5rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-inner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent        0%,
+    rgba(255,255,255,0.10) 50%,
+    transparent       100%
+  );
+  animation: shimmer 1.8s ease-in-out infinite;
+}
+
+/* fade the whole skeleton container out before swapping content */
+.skeleton-exit {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   VIEW TRANSITIONS
+═══════════════════════════════════════════════════════════════════════════ */
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.view-enter {
+  animation: fadeUp 0.22s ease forwards;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BRAND TITLE — glow driven by --accent-rgb
+═══════════════════════════════════════════════════════════════════════════ */
+
+.brand-title {
+  text-shadow: 0 0 8px rgba(var(--accent-rgb), 0.4);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SEARCH BAR
+═══════════════════════════════════════════════════════════════════════════ */
+
+.search-bar {
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.search-bar:focus-within {
+  border-color: rgba(var(--accent-rgb), 0.25);
+  box-shadow:
+    inset 0 2px 8px rgba(0, 0, 0, 0.8),
+    0 0 0 1px rgba(var(--accent-rgb), 0.08);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   APP TILES
+═══════════════════════════════════════════════════════════════════════════ */
+
+.app-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition:
+    transform        0.22s ease,
+    background-color 0.22s ease,
+    border-color     0.22s ease,
+    box-shadow       0.22s ease;
+}
+
+.app-card:hover {
+  transform: translateY(-5px);
+  background-color: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DOCK
+═══════════════════════════════════════════════════════════════════════════ */
+
+.dock {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+}
+
+.dock-item {
+  color: rgba(255, 255, 255, 0.45);
+  transition:
+    color      0.18s ease,
+    transform  0.18s ease,
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.dock-item:hover {
+  color: rgba(255, 255, 255, 0.95);
+  transform: translateY(-3px);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dock-item.active {
+  color: rgba(255, 255, 255, 1);
+  background: rgba(var(--accent-rgb), 0.14);
+  border-radius: 50%;
+  box-shadow:
+    0 0 12px rgba(var(--accent-rgb), 0.3),
+    0 0 28px rgba(var(--accent-rgb), 0.12);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   APP FRAME OVERLAY
+═══════════════════════════════════════════════════════════════════════════ */
+
+.app-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  animation: fadeUp 0.18s ease forwards;
+}
+
+.app-frame-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.app-frame-title {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.app-frame-urlbar {
+  flex: 1;
+  text-align: center;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.35);
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 1rem;
+  pointer-events: none;
+  user-select: none;
+}
+
+.app-frame-close {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.app-frame-close:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 1);
+}
+
+.app-iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #000;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   IN-APP BROWSER
+═══════════════════════════════════════════════════════════════════════════ */
+
+/* main switches from centered-column to top-aligned when browser is open */
+main.browser-mode {
+  justify-content: flex-start;
+  align-items: stretch;
+  padding-top: 1rem;
+  padding-bottom: 5rem; /* clear the dock */
+}
+
+main.browser-mode #view-content {
+  flex: 1;
+  height: 100%;
+}
+
+.browser-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  height: calc(100dvh - 7.5rem); /* viewport minus dock */
+  width: 100%;
+}
+
+.browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  flex-shrink: 0;
+}
+
+.browser-url-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.8rem;
+  font-family: ui-monospace, 'Cascadia Code', monospace;
+  caret-color: rgba(255, 255, 255, 0.6);
+  min-width: 0;
+}
+
+.browser-url-input::placeholder { color: rgba(255, 255, 255, 0.22); }
+
+.browser-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: 0.4rem;
+  flex-shrink: 0;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.browser-btn:hover {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.browser-iframe {
+  flex: 1;
+  width: 100%;
+  border: none;
+  border-radius: 0.875rem;
+  background: #ffffff;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SETTINGS — accent swatch buttons
+═══════════════════════════════════════════════════════════════════════════ */
+
+.accent-swatch {
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.accent-swatch:hover  { transform: scale(1.15); }
+.accent-swatch.active { border-color: rgba(255, 255, 255, 0.8); }
