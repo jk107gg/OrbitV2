@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.15; transform: scale(1); }
+  50%       { opacity: 1;    transform: scale(1.5); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-5px); }
+}
+
+.star { animation: twinkle var(--dur, 3s) ease-in-out infinite; }
+
+.brand-glow {
+  text-shadow:
+    0 0 20px rgba(220, 38, 38, 0.9),
+    0 0 50px rgba(220, 38, 38, 0.5),
+    0 0 90px rgba(220, 38, 38, 0.25);
+}
+
+.nav-pill {
+  transition: background-color 0.2s, transform 0.2s;
+}
+.nav-pill:hover {
+  background-color: rgba(255,255,255,0.12);
+  transform: scale(1.08);
+}
+
+.quick-card {
+  transition: transform 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+.quick-card:hover {
+  transform: scale(1.05);
+  background-color: rgba(255,255,255,0.1);
+  box-shadow: 0 0 20px rgba(255,255,255,0.06);
+}
