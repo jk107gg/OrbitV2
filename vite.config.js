@@ -1,9 +1,6 @@
 import { defineConfig } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
 
-// Change this to any public Rammerhead instance
-const RHEAD_INSTANCE = 'https://r.joshuab.xyz'
-
 const STRIP_HEADERS = new Set([
   'x-frame-options',
   'content-security-policy',
@@ -38,21 +35,6 @@ export default defineConfig({
     {
       name: 'web-proxy',
       configureServer(server) {
-        // Proxy Rammerhead /newsession to avoid CORS issues from the browser
-        server.middlewares.use('/rhead-newsession', async (req, res) => {
-          if (req.method !== 'POST') { res.statusCode = 405; res.end(); return }
-          try {
-            const upstream = await fetch(`${RHEAD_INSTANCE}/newsession`, { method: 'POST' })
-            const text = await upstream.text()
-            res.setHeader('Content-Type', 'text/plain')
-            res.setHeader('Access-Control-Allow-Origin', '*')
-            res.end(text.trim())
-          } catch (err) {
-            res.statusCode = 502
-            res.end('')
-          }
-        })
-
         server.middlewares.use('/proxy', async (req, res, next) => {
           const qs = req.url?.includes('?') ? req.url.slice(req.url.indexOf('?') + 1) : ''
           const targetUrl = new URLSearchParams(qs).get('url')
