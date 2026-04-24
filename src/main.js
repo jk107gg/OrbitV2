@@ -2,7 +2,7 @@ import './style.css'
 import { initializeApp }   from 'firebase/app'
 import {
   getDatabase, ref, push, set,
-  onValue, onChildAdded, off,
+  onValue, onChildAdded,
   onDisconnect, serverTimestamp,
 } from 'firebase/database'
 
@@ -132,10 +132,10 @@ function _renderChatMsg(snap) {
 }
 
 function _teardownChatMessages() {
-  if (_chatActiveRef && _chatUnsub) {
-    off(_chatActiveRef, 'child_added', _chatUnsub)
-    _chatActiveRef = null
+  if (_chatUnsub) {
+    _chatUnsub()        // onChildAdded returns an unsubscribe fn — just call it
     _chatUnsub     = null
+    _chatActiveRef = null
   }
 }
 
