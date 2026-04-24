@@ -30,6 +30,7 @@ function readBody(req) {
 }
 
 export default defineConfig({
+  base: '/OrbitV2/',
   plugins: [
     tailwindcss(),
     {
