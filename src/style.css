@@ -116,8 +116,9 @@
 ═══════════════════════════════════════════════════════════════════════════ */
 
 .brand-title {
+  color: var(--accent-color);
   text-shadow: 0 0 8px var(--glow-color);
-  transition: text-shadow 0.3s ease;
+  transition: color 0.3s ease, text-shadow 0.3s ease;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

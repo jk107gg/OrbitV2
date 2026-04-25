@@ -732,7 +732,7 @@ function homeViewHTML() {
     <div class="flex flex-col items-center gap-9 w-full">
       <div class="flex flex-col items-center gap-3 select-none">
         <h1 class="brand-title text-[5.5rem] sm:text-[7rem] font-black
-                   tracking-tighter text-white leading-none uppercase">
+                   tracking-tighter leading-none uppercase">
           ${BRAND}
         </h1>
         <p class="text-[10px] uppercase tracking-[0.5em] text-white font-light"
