@@ -1492,23 +1492,21 @@ function onboardingHTML() {
   return `
     <div id="onboarding-wrap" style="display:none">
 
-      <!-- Dedicated starfield — onboarding is solid black so needs its own -->
+      <!-- Own slow starfield — solid black bg needs its own stars -->
       <div class="ob-stars-wrap" aria-hidden="true">
-        <div class="stars-layer" id="ob-stars1"></div>
-        <div class="stars-layer" id="ob-stars2"></div>
+        <div id="ob-stars1"></div>
+        <div id="ob-stars2"></div>
       </div>
 
-      <!-- Persistent small logo watermark shown on all steps -->
-      <div class="ob-logo-mark">
-        <h1 class="brand-title" style="font-size:2rem;letter-spacing:-2px;line-height:1;text-transform:uppercase">ORBIT</h1>
+      <!-- Step 1: Landing — massive logo, click/key anywhere to continue -->
+      <div id="ob-step-1" class="ob-step ob-step-active ob-step-landing">
+        <div class="ob-hero-wrap">
+          <h1 class="brand-title ob-hero-logo">ORBIT</h1>
+        </div>
+        <p class="ob-hint">— press any key or click to continue —</p>
       </div>
 
-      <!-- Step 1: Welcome -->
-      <div id="ob-step-1" class="ob-step ob-step-active">
-        <button id="ob-init-btn" class="ob-btn">Initialize</button>
-      </div>
-
-      <!-- Step 2: Theme -->
+      <!-- Step 2: Theme selector -->
       <div id="ob-step-2" class="ob-step">
         <p class="ob-label">Choose Your Theme</p>
         <div class="ob-theme-grid">${themeCards}</div>
@@ -1535,7 +1533,7 @@ function initOnboarding() {
 
   wrap.style.display = 'flex'
 
-  // Generate dedicated stars for the onboarding (always white — theme accents aren't stars here)
+  // Slow starfield — 2× longer duration than main app
   requestAnimationFrame(() => {
     const s1 = document.getElementById('ob-stars1')
     const s2 = document.getElementById('ob-stars2')
@@ -1543,9 +1541,15 @@ function initOnboarding() {
     if (s2) s2.style.boxShadow = starShadows(220, 0.85, '255, 255, 255')
   })
 
+  // Start pulse after reveal finishes
+  setTimeout(() => {
+    document.querySelector('.ob-hero-wrap')?.classList.add('ob-pulsing')
+  }, 1600)
+
   let step = 1
 
   function goTo(n) {
+    if (step === n) return
     const cur = document.getElementById(`ob-step-${step}`)
     const nxt = document.getElementById(`ob-step-${n}`)
     if (!cur || !nxt) return
@@ -1557,20 +1561,29 @@ function initOnboarding() {
     }, 360)
   }
 
-  document.getElementById('ob-init-btn')?.addEventListener('click',    () => goTo(2))
-  document.getElementById('ob-continue-btn')?.addEventListener('click', () => goTo(3))
+  // Step 1: any click or keypress advances (ignore modifier-only keys)
+  const onAnyKey = e => {
+    if (step !== 1) return
+    if (['Shift','Control','Alt','Meta'].includes(e.key)) return
+    goTo(2)
+  }
+  document.addEventListener('keydown', onAnyKey)
 
-  // Live theme preview — delegated on the wrap
   wrap.addEventListener('click', e => {
+    if (step === 1) { goTo(2); return }
+    // Step 2: theme card clicks for live preview
     const card = e.target.closest('.ob-theme-card[data-theme-name]')
     if (card) setTheme(card.dataset.themeName)
   })
 
+  document.getElementById('ob-continue-btn')?.addEventListener('click', () => goTo(3))
+
   function launch() {
     const username = document.getElementById('ob-username')?.value.trim()
                   || `Guest_${Math.floor(1000 + Math.random() * 9000)}`
-    localStorage.setItem(CHAT_NICK_KEY,   username)
-    localStorage.setItem('orbit_setup',   '1')
+    localStorage.setItem(CHAT_NICK_KEY, username)
+    localStorage.setItem('orbit_setup', '1')
+    document.removeEventListener('keydown', onAnyKey)
     wrap.style.transition = 'opacity 0.8s ease'
     wrap.style.opacity    = '0'
     setTimeout(() => { wrap.style.display = 'none' }, 820)

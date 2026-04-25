@@ -463,18 +463,28 @@ main.browser-mode #view-content {
    ONBOARDING OVERLAY
 ═══════════════════════════════════════════════════════════════════════════ */
 
+@keyframes ob-reveal {
+  from { opacity: 0; filter: blur(15px); }
+  to   { opacity: 1; filter: blur(0px); }
+}
+
+@keyframes ob-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.7; }
+}
+
 #onboarding-wrap {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: #000000; /* solid — own starfield handles the stars */
+  background: #000000;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
 }
 
-/* Onboarding's own starfield — same animation as main stars */
+/* Onboarding's own starfield */
 .ob-stars-wrap {
   position: absolute;
   inset: 0;
@@ -482,19 +492,51 @@ main.browser-mode #view-content {
   z-index: 0;
 }
 
-.ob-stars-wrap .stars-layer { position: absolute; top: 0; left: 0; }
-
-/* Small persistent ORBIT logo — top-center watermark across all steps */
-.ob-logo-mark {
+#ob-stars1 {
   position: absolute;
-  top: 2rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 2;
-  pointer-events: none;
-  opacity: 0.9;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  border-radius: 50%;
+  background: transparent;
+  animation: moveStars 180s linear infinite;
 }
 
+#ob-stars1::after {
+  content: '';
+  position: absolute;
+  top: 2000px;
+  left: 0;
+  width: inherit;
+  height: inherit;
+  border-radius: 50%;
+  box-shadow: inherit;
+}
+
+#ob-stars2 {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: transparent;
+  animation: moveStars 90s linear infinite;
+}
+
+#ob-stars2::after {
+  content: '';
+  position: absolute;
+  top: 2000px;
+  left: 0;
+  width: inherit;
+  height: inherit;
+  border-radius: 50%;
+  box-shadow: inherit;
+}
+
+/* Steps */
 .ob-step {
   position: absolute;
   z-index: 1;
@@ -519,17 +561,49 @@ main.browser-mode #view-content {
   transform: translateY(0);
 }
 
-.ob-brand {
+/* Landing step — full width so logo can breathe */
+.ob-step-landing {
+  max-width: 100%;
+  gap: 1.5rem;
+}
+
+/* Hero logo wrapper — drives the reveal + pulse animations */
+.ob-hero-wrap {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.75rem;
+  animation: ob-reveal 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
 }
 
-.ob-logo {
-  font-size: clamp(4.5rem, 14vw, 9rem);
+.ob-hero-wrap.ob-pulsing {
+  animation: ob-pulse 3s ease-in-out infinite;
+}
+
+/* Hero ORBIT logo — overrides .brand-title gradient fill with solid accent */
+.ob-hero-logo.brand-title {
+  background: none;
+  -webkit-background-clip: unset;
+  background-clip: unset;
+  -webkit-text-fill-color: var(--accent-color);
+  font-size: clamp(5rem, 15vw, 14rem);
+  letter-spacing: -6px;
+  font-weight: 900;
   line-height: 1;
+  text-shadow:
+    0 0  8px rgba(var(--accent-rgb), 0.90),
+    0 0 20px rgba(var(--accent-rgb), 0.65),
+    0 0 45px rgba(var(--accent-rgb), 0.40),
+    0 0 90px rgba(var(--accent-rgb), 0.18);
+}
+
+/* "press any key" hint */
+.ob-hint {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.35em;
   text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.28);
+  font-variant: small-caps;
 }
 
 .ob-label {
