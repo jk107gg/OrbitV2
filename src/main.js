@@ -50,12 +50,14 @@ const WATCH_SOURCES   = [
 
 // Named theme presets — background always pure black
 const THEMES = {
-  white:   { label: 'White',   rgb: '255, 255, 255', hex: '#ffffff' },
-  cyan:    { label: 'Cyan',    rgb: '100, 220, 255', hex: '#64dcff' },
-  purple:  { label: 'Purple',  rgb: '180, 100, 255', hex: '#b464ff' },
-  rose:    { label: 'Rose',    rgb: '255, 100, 140', hex: '#ff648c' },
-  emerald: { label: 'Emerald', rgb: '80,  220, 160', hex: '#50dcA0' },
-  amber:   { label: 'Amber',   rgb: '255, 185,  70', hex: '#ffb946' },
+  cherry: { label: 'CHERRY', rgb: '255,  60, 145', hex: '#ff3c91'                }, // Neon Pink   — high-energy soft pink bloom
+  blood:  { label: 'BLOOD',  rgb: '255,   0,   0', hex: '#ff0000' }, // Pure red — same render pipeline as all themes
+  pulse:  { label: 'PULSE',  rgb: '20,  140, 255', hex: '#148cff'                }, // Elec. Blue  — sharp neon like a live wire
+  toxic:  { label: 'TOXIC',  rgb: '80,  255,  60', hex: '#50ff3c'                }, // Acid Green  — bright radioactive glow
+  abyss:  { label: 'ABYSS',  rgb: '110,  35, 205', hex: '#6e23cd'                }, // Deep Purple — dark moody violet
+  nova:   { label: 'NOVA',   rgb: '255, 255, 255', hex: '#ffffff'                }, // Pure White  — blinding white/silver aura
+  ember:  { label: 'EMBER',  rgb: '255, 105,  10', hex: '#ff690a'                }, // Hot Orange  — fiery like a dying sun
+  crown:  { label: 'CROWN',  rgb: '255, 190,   0', hex: '#ffbe00'                }, // Gold        — rich metallic glow
 }
 // Flat array used wherever iteration is needed (settings swatches, etc.)
 const ACCENT_COLORS = Object.values(THEMES)
@@ -383,16 +385,42 @@ function setState(patch) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function setTheme(name) {
-  const theme = THEMES[name] ?? THEMES.white
-  document.documentElement.style.setProperty('--accent-rgb',   theme.rgb)
-  document.documentElement.style.setProperty('--accent-color', theme.hex)
-  document.documentElement.style.setProperty('--glow-color',   `rgba(${theme.rgb}, 0.4)`)
+  const theme = THEMES[name] ?? THEMES.nova
+  document.documentElement.dataset.theme = name   // CSS [data-theme="x"] overrides hook here
+  document.documentElement.style.setProperty('--accent-rgb',           theme.rgb)
+  document.documentElement.style.setProperty('--accent-color',         theme.hex)
+  document.documentElement.style.setProperty('--glow-color',           `rgba(${theme.rgb}, 0.4)`)
+  // Title background — custom gradient > noGradient flat > default milky-overlay
+  const titleBg = theme.gradient
+    ? theme.gradient
+    : theme.noGradient
+      ? theme.hex
+      : `linear-gradient(to bottom, rgba(255,255,255,0.45) 0%, rgba(255,255,255,0) 55%), ${theme.hex}`
+  document.documentElement.style.setProperty('--title-bg',          titleBg)
+  document.documentElement.style.setProperty('--title-text-shadow', theme.textShadow ?? 'none')
+
+  // Build filter string — noFilter themes (e.g. BLOOD) use text-shadow instead
+  if (theme.noFilter) {
+    document.documentElement.style.setProperty('--title-filter', 'none')
+  } else {
+    const g   = theme.glow ?? {}
+    const sm  = g.sm           ?? '8px'
+    const lg  = g.lg           ?? '20px'
+    const op  = g.outerOpacity ?? '0.45'
+    document.documentElement.style.setProperty('--title-filter',
+      `drop-shadow(0 0 ${sm} var(--accent-color)) drop-shadow(0 0 ${lg} rgba(var(--accent-rgb), ${op}))`)
+  }
   localStorage.setItem('orbit_theme', name)
   state.accentRgb = theme.rgb
-  regenerateStars(theme.rgb)
+  regenerateStars(theme.starRgb ?? theme.rgb)
   // Refresh settings swatches if visible
   const body = document.getElementById('settings-body')
   if (body) body.innerHTML = settingsBodyHTML()
+
+  // Sync onboarding theme cards (live preview during setup)
+  document.querySelectorAll('.ob-theme-card').forEach(c => {
+    c.classList.toggle('active', c.dataset.themeName === name)
+  })
 }
 
 // Legacy helper — resolve rgb to nearest named theme then delegate
@@ -735,8 +763,7 @@ function homeViewHTML() {
                    tracking-tighter leading-none uppercase">
           ${BRAND}
         </h1>
-        <p class="text-[10px] uppercase tracking-[0.5em] text-white font-light"
-           style="opacity:0.4">${TAGLINE}</p>
+        <p class="brand-tagline text-[10px] uppercase tracking-[0.5em] font-light">${TAGLINE}</p>
       </div>
 
       <div class="w-full max-w-md">
@@ -760,21 +787,24 @@ function settingsBodyHTML() {
   const isAppearance = state.settingsSection === 'appearance'
 
   const appearanceExpanded = isAppearance ? `
-    <div class="px-5 pb-4 flex flex-col gap-3">
-      <p class="text-white/30 text-xs uppercase tracking-widest">Accent colour</p>
-      <div class="flex gap-3 flex-wrap">
+    <div class="px-5 pb-5 flex flex-col gap-3">
+      <p class="text-white/30 text-[10px] uppercase tracking-widest">Color Theme</p>
+      <div class="grid grid-cols-4 gap-2">
         ${Object.entries(THEMES).map(([name, { label, rgb, hex }]) => `
           <button
-            class="accent-swatch${state.accentRgb === rgb ? ' active' : ''}"
-            data-theme-name="${name}"
-            title="${label}"
-            style="background:${hex}"
-          ></button>`).join('')}
+            class="theme-card${state.accentRgb === rgb ? ' active' : ''}"
+            data-theme-name="${name}">
+            <div class="theme-card-preview"
+                 style="background:rgba(${rgb},0.12);border-color:rgba(${rgb},0.3)">
+              <span style="color:${hex};filter:drop-shadow(0 0 6px rgba(${rgb},0.85))">Aa</span>
+            </div>
+            <span class="theme-card-name">${label}</span>
+          </button>`).join('')}
       </div>
     </div>` : ''
 
   return `
-    ${settingsRowHTML('Appearance', 'Accent colour', 'appearance', isAppearance)}
+    ${settingsRowHTML('Appearance', 'Theme & colors', 'appearance', isAppearance)}
     ${appearanceExpanded}
     ${settingsRowHTML('Privacy',    'History, cookies, tracking')}
     ${settingsRowHTML('About',      'Version 2.0.0 — OrbitV2')}`
@@ -856,6 +886,10 @@ function skeletonViewHTML({ title, subtitle, cards, layout }) {
         ${grid}
       </div>
     </div>`
+}
+
+function musicViewHTML() {
+  return `<div class="content-view"><iframe src="https://monochrome.tf" class="content-frame" allowfullscreen></iframe></div>`
 }
 
 function gamesViewHTML() {
@@ -1171,6 +1205,7 @@ function viewHTML() {
   switch (state.view) {
     case 'home':     return homeViewHTML()
     case 'settings': return settingsViewHTML()
+    case 'music':    return musicViewHTML()
     case 'games':    return gamesViewHTML()
     case 'tv':       return tvViewHTML()
     case 'chat':     return chatViewHTML()
@@ -1214,7 +1249,7 @@ function swapView() {
 
   // Browser view needs a different main layout (top-aligned, full height)
   const mainEl = document.querySelector('main')
-  const fullHeightViews = ['browser', 'games', 'tv', 'chat', 'ai']
+  const fullHeightViews = ['browser', 'games', 'tv', 'chat', 'ai', 'music']
   if (mainEl) mainEl.classList.toggle('browser-mode', fullHeightViews.includes(state.view))
 
   $viewContent.style.transition = 'opacity 0.12s ease, transform 0.12s ease'
@@ -1441,6 +1476,113 @@ window.__cherriLaunchGame  = game       => showGameOverlay(game)
 window.__cherriLaunchWatch = (id, type) => showWatchOverlay(id, type)
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ONBOARDING
+// ═══════════════════════════════════════════════════════════════════════════
+
+function onboardingHTML() {
+  const themeCards = Object.entries(THEMES).map(([name, { label, rgb, hex }]) => `
+    <button class="theme-card ob-theme-card" data-theme-name="${name}">
+      <div class="theme-card-preview"
+           style="background:rgba(${rgb},0.12);border-color:rgba(${rgb},0.3)">
+        <span style="color:${hex};filter:drop-shadow(0 0 6px rgba(${rgb},0.85))">Aa</span>
+      </div>
+      <span class="theme-card-name">${label}</span>
+    </button>`).join('')
+
+  return `
+    <div id="onboarding-wrap" style="display:none">
+
+      <!-- Dedicated starfield — onboarding is solid black so needs its own -->
+      <div class="ob-stars-wrap" aria-hidden="true">
+        <div class="stars-layer" id="ob-stars1"></div>
+        <div class="stars-layer" id="ob-stars2"></div>
+      </div>
+
+      <!-- Persistent small logo watermark shown on all steps -->
+      <div class="ob-logo-mark">
+        <h1 class="brand-title" style="font-size:2rem;letter-spacing:-2px;line-height:1;text-transform:uppercase">ORBIT</h1>
+      </div>
+
+      <!-- Step 1: Welcome -->
+      <div id="ob-step-1" class="ob-step ob-step-active">
+        <button id="ob-init-btn" class="ob-btn">Initialize</button>
+      </div>
+
+      <!-- Step 2: Theme -->
+      <div id="ob-step-2" class="ob-step">
+        <p class="ob-label">Choose Your Theme</p>
+        <div class="ob-theme-grid">${themeCards}</div>
+        <button id="ob-continue-btn" class="ob-btn">Continue</button>
+      </div>
+
+      <!-- Step 3: Identity -->
+      <div id="ob-step-3" class="ob-step">
+        <p class="ob-label">System Designation</p>
+        <input id="ob-username" class="ob-input" type="text"
+               placeholder="Enter username…" maxlength="24"
+               autocomplete="off" spellcheck="false">
+        <button id="ob-launch-btn" class="ob-btn ob-btn-launch">Launch</button>
+      </div>
+
+    </div>`
+}
+
+function initOnboarding() {
+  if (localStorage.getItem('orbit_setup')) return
+
+  const wrap = document.getElementById('onboarding-wrap')
+  if (!wrap) return
+
+  wrap.style.display = 'flex'
+
+  // Generate dedicated stars for the onboarding (always white — theme accents aren't stars here)
+  requestAnimationFrame(() => {
+    const s1 = document.getElementById('ob-stars1')
+    const s2 = document.getElementById('ob-stars2')
+    if (s1) s1.style.boxShadow = starShadows(700, 0.55, '255, 255, 255')
+    if (s2) s2.style.boxShadow = starShadows(220, 0.85, '255, 255, 255')
+  })
+
+  let step = 1
+
+  function goTo(n) {
+    const cur = document.getElementById(`ob-step-${step}`)
+    const nxt = document.getElementById(`ob-step-${n}`)
+    if (!cur || !nxt) return
+    cur.classList.remove('ob-step-active')
+    setTimeout(() => {
+      nxt.classList.add('ob-step-active')
+      step = n
+      if (n === 3) document.getElementById('ob-username')?.focus()
+    }, 360)
+  }
+
+  document.getElementById('ob-init-btn')?.addEventListener('click',    () => goTo(2))
+  document.getElementById('ob-continue-btn')?.addEventListener('click', () => goTo(3))
+
+  // Live theme preview — delegated on the wrap
+  wrap.addEventListener('click', e => {
+    const card = e.target.closest('.ob-theme-card[data-theme-name]')
+    if (card) setTheme(card.dataset.themeName)
+  })
+
+  function launch() {
+    const username = document.getElementById('ob-username')?.value.trim()
+                  || `Guest_${Math.floor(1000 + Math.random() * 9000)}`
+    localStorage.setItem(CHAT_NICK_KEY,   username)
+    localStorage.setItem('orbit_setup',   '1')
+    wrap.style.transition = 'opacity 0.8s ease'
+    wrap.style.opacity    = '0'
+    setTimeout(() => { wrap.style.display = 'none' }, 820)
+  }
+
+  document.getElementById('ob-launch-btn')?.addEventListener('click', launch)
+  document.getElementById('ob-username')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') launch()
+  })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // STARS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1474,6 +1616,7 @@ document.querySelector('#app').innerHTML = `
     </main>
 
     ${dockHTML()}
+    ${onboardingHTML()}
   </div>
 `
 
@@ -1482,10 +1625,11 @@ $dock        = document.getElementById('main-dock')
 
 bindViewEvents()
 bindDockEvents()
+initOnboarding()
 
 // On load: restore saved theme (sets CSS vars + generates colored stars)
 requestAnimationFrame(() => {
-  const saved = localStorage.getItem('orbit_theme') ?? 'white'
+  const saved = localStorage.getItem('orbit_theme') ?? 'cherry'
   setTheme(saved)
 })
 

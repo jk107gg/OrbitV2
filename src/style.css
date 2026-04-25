@@ -116,8 +116,29 @@
 ═══════════════════════════════════════════════════════════════════════════ */
 
 .brand-title {
+  /* setTheme() writes --title-bg: custom gradient | flat hex | milky-overlay+hex */
+  background: var(--title-bg, var(--accent-color));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+
+  /* Per-theme bloom override — 'none' for most, specific stack for e.g. BLOOD */
+  text-shadow: var(--title-text-shadow, none);
+
+  /* Chunky letterform — tight enough to nearly touch (Cherri spacing) */
+  font-weight: 900;
+  letter-spacing: -4px;
+
+  /* Entire filter string written by setTheme() — 'none' for text-shadow themes */
+  filter: var(--title-filter, none);
+
+  transition: filter 0.3s ease, background 0.3s ease, text-shadow 0.3s ease;
+}
+
+.brand-tagline {
   color: var(--accent-color);
-  text-shadow: 0 0 8px var(--glow-color);
+  opacity: 0.55;
+  text-shadow: 0 0 10px var(--accent-color);
   transition: color 0.3s ease, text-shadow 0.3s ease;
 }
 
@@ -348,20 +369,53 @@ main.browser-mode #view-content {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   SETTINGS — accent swatch buttons
+   SETTINGS — theme cards
 ═══════════════════════════════════════════════════════════════════════════ */
 
-.accent-swatch {
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 50%;
-  border: 2px solid transparent;
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: none;
+  padding: 0;
   cursor: pointer;
-  transition: transform 0.15s ease, border-color 0.15s ease;
+  transition: transform 0.15s ease;
 }
 
-.accent-swatch:hover  { transform: scale(1.15); }
-.accent-swatch.active { border-color: rgba(255, 255, 255, 0.8); }
+.theme-card:hover { transform: translateY(-2px); }
+
+.theme-card-preview {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 10px;
+  border: 1.5px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.theme-card.active .theme-card-preview {
+  border-color: rgba(255, 255, 255, 0.75) !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+.theme-card-name {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.35);
+  transition: color 0.2s ease;
+}
+
+.theme-card.active .theme-card-name {
+  color: rgba(255, 255, 255, 0.9);
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CONTENT VIEWS — games & TV (full-height, like browser)
@@ -404,6 +458,144 @@ main.browser-mode #view-content {
 #ai-messages::-webkit-scrollbar        { width: 4px; }
 #ai-messages::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.1); border-radius: 2px; }
 #ai-messages::-webkit-scrollbar-track  { background: transparent; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ONBOARDING OVERLAY
+═══════════════════════════════════════════════════════════════════════════ */
+
+#onboarding-wrap {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #000000; /* solid — own starfield handles the stars */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* Onboarding's own starfield — same animation as main stars */
+.ob-stars-wrap {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ob-stars-wrap .stars-layer { position: absolute; top: 0; left: 0; }
+
+/* Small persistent ORBIT logo — top-center watermark across all steps */
+.ob-logo-mark {
+  position: absolute;
+  top: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.ob-step {
+  position: absolute;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2rem;
+  padding: 2rem;
+  text-align: center;
+  width: 100%;
+  max-width: 480px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+.ob-step-active {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.ob-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.ob-logo {
+  font-size: clamp(4.5rem, 14vw, 9rem);
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.ob-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.45em;
+  color: rgba(255, 255, 255, 0.35);
+  text-transform: uppercase;
+  margin-bottom: -0.5rem;
+}
+
+/* Primary action button — accent-coloured outline */
+.ob-btn {
+  padding: 0.7rem 2.4rem;
+  border-radius: 9999px;
+  border: 1px solid var(--accent-color);
+  background: rgba(var(--accent-rgb), 0.10);
+  color: var(--accent-color);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.ob-btn:hover {
+  background: rgba(var(--accent-rgb), 0.20);
+  box-shadow: 0 0 22px rgba(var(--accent-rgb), 0.35);
+}
+
+.ob-btn-launch {
+  padding: 0.85rem 3rem;
+  font-size: 0.9rem;
+}
+
+/* Theme grid inside onboarding — 4 cols */
+.ob-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  width: 100%;
+  max-width: 380px;
+}
+
+/* Username input */
+.ob-input {
+  width: 280px;
+  padding: 0.85rem 1.5rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 1rem;
+  text-align: center;
+  outline: none;
+  caret-color: var(--accent-color);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ob-input::placeholder { color: rgba(255, 255, 255, 0.18); }
+
+.ob-input:focus {
+  border-color: rgba(var(--accent-rgb), 0.45);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.15);
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    THEME TRANSITIONS — smooth accent-colour shifts across UI elements
