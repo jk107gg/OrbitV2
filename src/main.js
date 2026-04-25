@@ -48,15 +48,17 @@ const WATCH_SOURCES   = [
   { id: 'videasy',   name: 'Videasy',    urls: { movie: 'https://player.videasy.net/movie/{id}?color=8834ec',           tv: 'https://player.videasy.net/tv/{id}/{season}/{episode}?color=8834ec' } },
 ]
 
-// Accent colour palette — rgb values feed into rgba(var(--accent-rgb), alpha)
-const ACCENT_COLORS = [
-  { label: 'White',    rgb: '255, 255, 255', hex: '#ffffff' },
-  { label: 'Cyan',     rgb: '100, 220, 255', hex: '#64dcff' },
-  { label: 'Purple',   rgb: '180, 100, 255', hex: '#b464ff' },
-  { label: 'Rose',     rgb: '255, 100, 140', hex: '#ff648c' },
-  { label: 'Emerald',  rgb: '80,  220, 160', hex: '#50dcA0' },
-  { label: 'Amber',    rgb: '255, 185,  70', hex: '#ffb946' },
-]
+// Named theme presets — background always pure black
+const THEMES = {
+  white:   { label: 'White',   rgb: '255, 255, 255', hex: '#ffffff' },
+  cyan:    { label: 'Cyan',    rgb: '100, 220, 255', hex: '#64dcff' },
+  purple:  { label: 'Purple',  rgb: '180, 100, 255', hex: '#b464ff' },
+  rose:    { label: 'Rose',    rgb: '255, 100, 140', hex: '#ff648c' },
+  emerald: { label: 'Emerald', rgb: '80,  220, 160', hex: '#50dcA0' },
+  amber:   { label: 'Amber',   rgb: '255, 185,  70', hex: '#ffb946' },
+}
+// Flat array used wherever iteration is needed (settings swatches, etc.)
+const ACCENT_COLORS = Object.values(THEMES)
 
 // ── Firebase / Chat ───────────────────────────────────────────────────────
 
@@ -380,8 +382,38 @@ function setState(patch) {
 // THEME
 // ═══════════════════════════════════════════════════════════════════════════
 
+function setTheme(name) {
+  const theme = THEMES[name] ?? THEMES.white
+  document.documentElement.style.setProperty('--accent-rgb',   theme.rgb)
+  document.documentElement.style.setProperty('--accent-color', theme.hex)
+  document.documentElement.style.setProperty('--glow-color',   `rgba(${theme.rgb}, 0.4)`)
+  localStorage.setItem('orbit_theme', name)
+  state.accentRgb = theme.rgb
+  regenerateStars(theme.rgb)
+  // Refresh settings swatches if visible
+  const body = document.getElementById('settings-body')
+  if (body) body.innerHTML = settingsBodyHTML()
+}
+
+// Legacy helper — resolve rgb to nearest named theme then delegate
 function applyAccent(rgb) {
-  document.documentElement.style.setProperty('--accent-rgb', rgb)
+  const entry = Object.entries(THEMES).find(([, t]) => t.rgb === rgb)
+  if (entry) {
+    setTheme(entry[0])
+  } else {
+    // Custom rgb not in THEMES — apply directly without saving a name
+    document.documentElement.style.setProperty('--accent-rgb',   rgb)
+    document.documentElement.style.setProperty('--accent-color', `rgb(${rgb})`)
+    document.documentElement.style.setProperty('--glow-color',   `rgba(${rgb}, 0.4)`)
+    regenerateStars(rgb)
+  }
+}
+
+function regenerateStars(rgb) {
+  const s1 = document.getElementById('stars1')
+  const s2 = document.getElementById('stars2')
+  if (s1) s1.style.boxShadow = starShadows(800, 0.55, rgb)
+  if (s2) s2.style.boxShadow = starShadows(250, 0.85, rgb)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -731,10 +763,10 @@ function settingsBodyHTML() {
     <div class="px-5 pb-4 flex flex-col gap-3">
       <p class="text-white/30 text-xs uppercase tracking-widest">Accent colour</p>
       <div class="flex gap-3 flex-wrap">
-        ${ACCENT_COLORS.map(({ label, rgb, hex }) => `
+        ${Object.entries(THEMES).map(([name, { label, rgb, hex }]) => `
           <button
             class="accent-swatch${state.accentRgb === rgb ? ' active' : ''}"
-            data-accent-rgb="${rgb}"
+            data-theme-name="${name}"
             title="${label}"
             style="background:${hex}"
           ></button>`).join('')}
@@ -1382,9 +1414,9 @@ function bindViewEvents() {
       const section = row.dataset.settingsSection
       setState({ settingsSection: state.settingsSection === section ? null : section })
     }
-    const swatch = e.target.closest('[data-accent-rgb]')
+    const swatch = e.target.closest('[data-theme-name]')
     if (swatch) {
-      setState({ accentRgb: swatch.dataset.accentRgb })
+      setTheme(swatch.dataset.themeName)
     }
   })
 }
@@ -1412,13 +1444,13 @@ window.__cherriLaunchWatch = (id, type) => showWatchOverlay(id, type)
 // STARS
 // ═══════════════════════════════════════════════════════════════════════════
 
-function starShadows(count, alpha) {
+function starShadows(count, alpha, rgb = '255, 255, 255') {
   const out = []
   for (let i = 0; i < count; i++) {
     const x = Math.floor(Math.random() * 2000)
     const y = Math.floor(Math.random() * 2000)
     const a = (alpha * (0.4 + Math.random() * 0.6)).toFixed(2)
-    out.push(`${x}px ${y}px rgba(255,255,255,${a})`)
+    out.push(`${x}px ${y}px rgba(${rgb},${a})`)
   }
   return out.join(',')
 }
@@ -1451,9 +1483,10 @@ $dock        = document.getElementById('main-dock')
 bindViewEvents()
 bindDockEvents()
 
+// On load: restore saved theme (sets CSS vars + generates colored stars)
 requestAnimationFrame(() => {
-  document.getElementById('stars1').style.boxShadow = starShadows(800, 0.55)
-  document.getElementById('stars2').style.boxShadow = starShadows(250, 0.85)
+  const saved = localStorage.getItem('orbit_theme') ?? 'white'
+  setTheme(saved)
 })
 
 // ═══════════════════════════════════════════════════════════════════════════

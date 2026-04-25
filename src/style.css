@@ -6,7 +6,10 @@
 ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  --accent-rgb: 255, 255, 255;
+  --accent-rgb:   255, 255, 255;
+  --accent-color: #ffffff;
+  --glow-color:   rgba(255, 255, 255, 0.4);
+  --bg-color:     #000000;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -113,7 +116,8 @@
 ═══════════════════════════════════════════════════════════════════════════ */
 
 .brand-title {
-  text-shadow: 0 0 8px rgba(var(--accent-rgb), 0.4);
+  text-shadow: 0 0 8px var(--glow-color);
+  transition: text-shadow 0.3s ease;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -399,3 +403,38 @@ main.browser-mode #view-content {
 #ai-messages::-webkit-scrollbar        { width: 4px; }
 #ai-messages::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.1); border-radius: 2px; }
 #ai-messages::-webkit-scrollbar-track  { background: transparent; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   THEME TRANSITIONS — smooth accent-colour shifts across UI elements
+═══════════════════════════════════════════════════════════════════════════ */
+
+.dock {
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.dock-item {
+  transition:
+    color        0.3s ease,
+    transform    0.18s ease,
+    background   0.3s ease,
+    box-shadow   0.3s ease;
+}
+
+.dock-item.active {
+  transition:
+    color        0.3s ease,
+    background   0.3s ease,
+    box-shadow   0.3s ease;
+}
+
+.search-bar {
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.app-card {
+  transition:
+    transform        0.22s ease,
+    background-color 0.3s ease,
+    border-color     0.3s ease,
+    box-shadow       0.3s ease;
+}
