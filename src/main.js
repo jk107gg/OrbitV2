@@ -37,9 +37,6 @@ const BROWSER_HOME    = 'https://duckduckgo.com'
 const BROWSER_SEARCH  = q => `https://duckduckgo.com/lite/?q=${encodeURIComponent(q)}`
 const PROXY_HOST      = 'https://yousifcantleakthis.bostoncareercounselor.com'
 
-const GAME_ZONES_URL  = 'https://cdn.jsdelivr.net/gh/freebuisness/assets@latest/zones.json'
-const GAME_COVER_BASE = 'https://cdn.jsdelivr.net/gh/freebuisness/covers@latest'
-const GAME_HTML_BASE  = 'https://cdn.jsdelivr.net/gh/freebuisness/html@latest'
 const TMDB_KEY        = 'fb7bb23f03b6994dafc674c074d01761'
 const WATCH_SOURCES   = [
   { id: 'vidlink',   name: 'VidLink',    urls: { movie: 'https://vidlink.pro/movie/{id}',                              tv: 'https://vidlink.pro/tv/{id}/{season}/{episode}'                      } },
@@ -510,18 +507,52 @@ function showGameOverlay(game) {
     <div class="app-frame-bar">
       <button id="close-game-btn" class="app-frame-close">${icoArrowLeft(14)} Games</button>
       <span class="app-frame-title">${game.name}</span>
-      <div></div>
+      <div style="display:flex;gap:6px">
+        <button id="download-game-btn" class="app-frame-close" style="opacity:0.35;pointer-events:none" title="Download game">${icoDownload(14)} Save</button>
+        <button id="fullscreen-game-btn" class="app-frame-close" style="opacity:0.35;pointer-events:none" title="Open in new tab">${icoExternalLink(14)} Fullscreen</button>
+      </div>
     </div>
     <iframe id="game-iframe" class="app-iframe"
       sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-same-origin"
       allowfullscreen></iframe>`
   document.getElementById('orbit-root').appendChild(el)
   document.getElementById('close-game-btn').addEventListener('click', removeGameOverlay)
+  let cachedHTML = null
+  function enableOverlayBtns() {
+    const fs = document.getElementById('fullscreen-game-btn')
+    const dl = document.getElementById('download-game-btn')
+    if (fs) { fs.style.opacity = '1'; fs.style.pointerEvents = 'auto' }
+    if (dl) { dl.style.opacity = '1'; dl.style.pointerEvents = 'auto' }
+  }
+  document.getElementById('fullscreen-game-btn').addEventListener('click', () => {
+    if (!cachedHTML) return
+    const win = window.open('about:blank', '_blank')
+    win.document.open()
+    win.document.write(cachedHTML)
+    win.document.close()
+  })
+  document.getElementById('download-game-btn').addEventListener('click', () => {
+    if (!cachedHTML) return
+    const safeName = game.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()
+    const blob = new Blob([cachedHTML], { type: 'text/html' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href = url; a.download = safeName + '.html'
+    document.body.appendChild(a); a.click()
+    document.body.removeChild(a); URL.revokeObjectURL(url)
+  })
   const iframe = document.getElementById('game-iframe')
   fetch(game.url)
     .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text() })
-    .then(html => { if (iframe.isConnected) iframe.srcdoc = html })
-    .catch(err => { if (iframe.isConnected) iframe.srcdoc = `<body style="background:#000;color:rgba(255,255,255,.4);display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;text-align:center"><p>Failed to load game<br><small>${err.message}</small></p></body>` })
+    .then(html => {
+      cachedHTML = html
+      enableOverlayBtns()
+      if (iframe.isConnected) iframe.srcdoc = html
+    })
+    .catch(() => {
+      // CORS fetch failed — fall back to direct src (proxy/truffled-style games)
+      if (iframe.isConnected) iframe.src = game.url
+    })
 }
 
 function removeGameOverlay() {
@@ -552,62 +583,195 @@ function removeWatchOverlay() {
 // ── srcdoc builders ───────────────────────────────────────────────────────
 
 function buildGamesSrcdoc() {
-  const css = `*{box-sizing:border-box;margin:0;padding:0}html,body{width:100%;height:100%;background:#000;color:#e0e0e0;font-family:system-ui,-apple-system,sans-serif;overflow:hidden}body{display:flex;flex-direction:column;gap:10px;padding:14px}button,input{font:inherit}.search{width:100%;padding:9px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:#e0e0e0;outline:none;flex-shrink:0}.search::placeholder{color:rgba(255,255,255,.25)}.grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));align-content:start;gap:10px;overflow-y:auto;padding-right:2px}.card{padding:9px;border-radius:14px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);cursor:pointer;transition:.15s;color:#e0e0e0;display:block;width:100%;text-align:left}.card:hover{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.07);transform:translateY(-2px)}.card img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;border-radius:10px;background:rgba(255,255,255,.05)}.card h3{margin:8px 0 3px;font-size:12px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.card p{color:rgba(255,255,255,.35);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.status{color:rgba(255,255,255,.25);font-size:12px;flex-shrink:0;min-height:16px}`
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>
-<input class="search" id="q" placeholder="search games...">
-<div class="grid" id="g"></div>
-<div class="status" id="s">loading games...</div>
-<script>
-var COVERS=${JSON.stringify(GAME_COVER_BASE)},HTML_B=${JSON.stringify(GAME_HTML_BASE)},ZONES=${JSON.stringify(GAME_ZONES_URL)};
-var grid=document.getElementById('g'),status=document.getElementById('s'),search=document.getElementById('q');
-var games=[],active='';
-function resolve(v,base){
-  if(!v)return '';
-  var r=String(v).split('{COVER_URL}').join(COVERS).split('{HTML_URL}').join(HTML_B).split('{HTML}').join(HTML_B).split('{COVERS}').join(COVERS);
-  if(r.indexOf('http://')===0||r.indexOf('https://')===0)return r;
-  while(r.charAt(0)==='/')r=r.slice(1);
-  return base+'/'+r;
-}
-function normalize(raw){
-  var candidates=[raw,raw&&raw.data,raw&&raw.attributes].filter(Boolean);
-  for(var i=0;i<candidates.length;i++){
-    var obj=candidates[i];
-    var name=obj.name||obj.title||obj.n||'';
-    var cover=obj.cover||obj.image||obj.thumbnail||obj.img||obj.coverUrl||'';
-    var url=obj.url||obj.src||obj.link||obj.path||obj.gameUrl||'';
-    var author=obj.author||obj.creator||obj.by||'';
-    var special=Array.isArray(obj.special)?obj.special:[];
-    if(name&&(cover||url))return{name:String(name).trim(),cover:resolve(cover,COVERS),url:resolve(url,HTML_B),author:String(author).trim(),special:special};
+  const css = `*{box-sizing:border-box;margin:0;padding:0}html,body{width:100%;height:100%;background:transparent;color:#e0e0e0;font-family:system-ui,-apple-system,sans-serif;overflow:hidden}body{display:flex;flex-direction:column}select,input{font:inherit;color:#e0e0e0;outline:none}.controls{display:flex;gap:8px;padding:12px;flex-shrink:0;flex-wrap:wrap;align-items:center}.ctrl{padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);font-size:12px;cursor:pointer}#search{flex:1;min-width:140px}#search::placeholder{color:rgba(255,255,255,.25)}.grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));align-content:start;gap:10px;overflow-y:auto;padding:0 12px 12px}.card{border-radius:12px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);cursor:pointer;transition:.15s;overflow:hidden;display:flex;flex-direction:column;position:relative}.card:hover{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.07);transform:translateY(-2px)}.card img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:rgba(255,255,255,.05)}.card-name{padding:6px 8px;font-size:11px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.badge{position:absolute;top:6px;right:6px;font-size:8px;font-weight:700;letter-spacing:.04em;padding:2px 5px;border-radius:4px;text-transform:uppercase}.status{color:rgba(255,255,255,.25);font-size:12px;padding:0 12px 8px;flex-shrink:0}`
+
+  const provMeta = {
+    'gn-math':  { label: 'GN-Math',   color: '#00bfff' },
+    'elite':    { label: 'Elite',      color: '#ff6b35' },
+    'petezah':  { label: 'PeteZah',   color: '#a855f7' },
+    'sea-bean': { label: 'Sea Bean',   color: '#10b981' },
+    'seraph':   { label: 'Seraph',     color: '#22c55e' },
+    'blox':     { label: 'Bloxcraft', color: '#f59e0b' },
+    'truffled': { label: 'Truffled',  color: '#ec4899' },
+    'ugs':      { label: 'UGS',       color: '#94a3b8' },
   }
-  return null;
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>
+<div class="controls">
+  <select id="provSel" class="ctrl">
+    <option value="gn-math">GN-Math</option>
+    <option value="truffled">Truffled.lol</option>
+    <option value="petezah">PeteZah</option>
+    <option value="elite">Elite Gamez</option>
+    <option value="sea-bean">Sea Bean</option>
+    <option value="ugs">UGS</option>
+    <option value="blox">Bloxcraft UBG</option>
+    <option value="seraph">Seraph</option>
+  </select>
+  <input id="search" class="ctrl" placeholder="search games...">
+  <select id="sortSel" class="ctrl">
+    <option value="a-z">A–Z</option>
+    <option value="z-a">Z–A</option>
+    <option value="latest">Latest</option>
+    <option value="oldest">Oldest</option>
+  </select>
+  <select id="catSel" class="ctrl" style="display:none">
+    <option value="">All Categories</option>
+    <option value="action">Action</option>
+    <option value="racing">Racing</option>
+    <option value="strategy">Strategy</option>
+    <option value="sports">Sports</option>
+    <option value="skill">Skill</option>
+    <option value="shooting">Shooting</option>
+    <option value="2 player">2 Player</option>
+    <option value="io">IO</option>
+  </select>
+</div>
+<div class="grid" id="grid"></div>
+<div class="status" id="status"></div>
+<script>
+var PM=${JSON.stringify(provMeta)};
+var allGames=[], provSel=document.getElementById('provSel'), sortSel=document.getElementById('sortSel'),
+    catSel=document.getElementById('catSel'), search=document.getElementById('search'),
+    grid=document.getElementById('grid'), status=document.getElementById('status');
+
+function fallback(n){return 'https://ui-avatars.com/api/?name='+encodeURIComponent(n)+'&background=111827&color=6b7280&size=256&bold=true';}
+
+function resolveGnMath(u){
+  if(!u)return '';
+  if(u.startsWith('http'))return u;
+  return 'https://cdn.jsdelivr.net/gh/freebuisness/html@main/'+u.replace('{HTML_URL}','').replace(/^\//,'');
 }
-function render(items){
+
+async function loadGames(){
+  var prov=provSel.value;
+  grid.innerHTML=''; status.textContent='loading...'; allGames=[];
+  catSel.style.display=prov==='petezah'?'block':'none';
+  if(prov!=='petezah')catSel.value='';
+  try{
+    if(prov==='gn-math'){
+      var d=await fetch('https://cdn.jsdelivr.net/gh/freebuisness/assets/zones.json').then(r=>r.json());
+      allGames=d.filter(function(g){return g.id!==-1&&!g.name.startsWith('[!]');}).map(function(z,i){
+        var cv=(z.cover||'').replace('{COVER_URL}','').replace(/^\//,'');
+        return{name:z.name,cover:cv?'https://cdn.jsdelivr.net/gh/freebuisness/covers@main/'+cv:fallback(z.name),url:resolveGnMath(z.url),provider:'gn-math',order:i};
+      });
+    }else if(prov==='elite'){
+      var d=await fetch('https://cdn.jsdelivr.net/gh/elite-gamez/elite-gamez.github.io@main/games.json').then(r=>r.json());
+      var base='https://cdn.jsdelivr.net/gh/elite-gamez/elite-gamez.github.io@main/';
+      allGames=d.map(function(g,i){
+        var url=g.url?(g.url.startsWith('http')?g.url:base+g.url):'';
+        var cover=g.image?(g.image.startsWith('http')?g.image:base+g.image):fallback(g.title||g.name||'?');
+        return{name:g.title||g.name||'Unknown',cover:cover,url:url,provider:'elite',order:i};
+      });
+    }else if(prov==='petezah'){
+      var d=await fetch('https://cdn.jsdelivr.net/gh/PeteZah-G/singlefile-json@main/search.json').then(r=>r.json());
+      allGames=(d.games||[]).map(function(g,i){
+        var url=g.url||'';
+        if(url&&!url.endsWith('index.html')&&!url.match(/\.\w+$/))url=url.replace(/\/$/,'')+'/index.html';
+        return{name:g.label||'Unknown',cover:g.imageUrl||fallback(g.label||'?'),url:url,provider:'petezah',order:i,categories:g.categories||[]};
+      });
+    }else if(prov==='sea-bean'){
+      var d=await fetch('https://cdn.jsdelivr.net/gh/sea-bean-unblocked/sde@main/zzz.json').then(r=>r.json());
+      var smBase='https://cdn.jsdelivr.net/gh/sea-bean-unblocked/Singlemile@main/';
+      allGames=d.map(function(g,i){
+        var html=g.html||g.url||'';
+        if(html.includes('{HTML_URL}'))html=html.replace('{HTML_URL}',smBase+'games/');
+        else if(!html.startsWith('http'))html=smBase+'games/'+html.replace(/^\//,'');
+        var cv=(g.cover||g.img||'').replace('{COVER_URL}/','');
+        var cover=cv.startsWith('http')?cv:(cv?smBase+'Icon/'+cv:fallback(g.name||'?'));
+        return{name:g.name||g.id||'Unknown',cover:cover,url:html,provider:'sea-bean',order:i};
+      });
+    }else if(prov==='seraph'){
+      var d=await fetch('https://cdn.jsdelivr.net/gh/DominumNetwork/dominum@main/src/assets/libraries/seraph/games.json').then(r=>r.json());
+      var srBase='https://cdn.jsdelivr.net/gh/a456pur/seraph@main/';
+      allGames=d.map(function(g,i){
+        var p=g.url.endsWith('index.html')?g.url:g.url.replace(/\/?$/,'/index.html');
+        var url=p.startsWith('http')?p:srBase+p.replace(/^\//,'');
+        return{name:g.name,cover:g.img||fallback(g.name),url:url,provider:'seraph',order:i};
+      });
+    }else if(prov==='blox'){
+      var d=await fetch('https://cdn.jsdelivr.net/gh/tharun9772/tharun9772.github.io/games/games.json').then(r=>r.json());
+      var blBase='https://cdn.jsdelivr.net/gh/tharun9772/tharun9772.github.io@main/';
+      allGames=d.map(function(g,i){
+        var u=(g.url||'').replace('/app-viewer/?view=/','');
+        if(!u.endsWith('index.html'))u=u.replace(/\/?$/,'/')+('index.html');
+        var url=u.startsWith('http')?u:blBase+u.replace(/^\//,'');
+        return{name:g.name,cover:g.img||fallback(g.name),url:url,provider:'blox',order:i};
+      });
+    }else if(prov==='truffled'){
+      var d=await fetch('https://cdn.jsdelivr.net/gh/aukak/truffled@main/public/js/json/g.json').then(r=>r.json());
+      var proxy='https://truffled.lol';
+      allGames=(d.games||[]).map(function(g,i){
+        var url=g.url.startsWith('http')?g.url:proxy+(g.url.startsWith('/')?'':'/')+g.url;
+        var thumb=(g.thumbnail||'').startsWith('http')?g.thumbnail:proxy+((g.thumbnail||'').startsWith('/')?'':'/')+(g.thumbnail||'');
+        return{name:g.name,cover:thumb,url:url,provider:'truffled',order:i};
+      });
+    }else if(prov==='ugs'){
+      var repos=['tharun9772/ugs-1','tharun9772/ugs-2','tharun9772/ugs-3'],idx=0;
+      for(var ri=0;ri<repos.length;ri++){
+        try{
+          var files=await fetch('https://api.github.com/repos/'+repos[ri]+'/contents/').then(r=>r.json());
+          files.forEach(function(f){
+            if(f.type==='file'&&f.name.startsWith('cl')&&f.name.endsWith('.html')){
+              var n=f.name.replace(/^cl/,'').replace('.html','');
+              n=n.charAt(0).toUpperCase()+n.slice(1);
+              allGames.push({name:n,cover:'https://cdn.jsdelivr.net/gh/tharun9772/game-assets@main/5968517.png',
+                url:'https://cdn.jsdelivr.net/gh/'+repos[ri]+'@main/'+f.name,provider:'ugs',order:idx++});
+            }
+          });
+        }catch(e){}
+      }
+    }
+    status.textContent='';
+    applyFilters();
+  }catch(e){
+    status.textContent='failed to load: '+e.message;
+    grid.innerHTML='';
+  }
+}
+
+function applyFilters(){
+  var q=search.value.toLowerCase(),sort=sortSel.value,cat=catSel.value.toLowerCase();
+  var list=allGames.filter(function(g){
+    return g.name.toLowerCase().indexOf(q)!==-1&&(!cat||(g.categories&&g.categories.indexOf(cat)!==-1));
+  });
+  list.sort(function(a,b){
+    if(sort==='a-z')return a.name.localeCompare(b.name);
+    if(sort==='z-a')return b.name.localeCompare(a.name);
+    if(sort==='latest')return b.order-a.order;
+    if(sort==='oldest')return a.order-b.order;
+    return 0;
+  });
+  render(list);
+}
+
+function render(list){
   grid.innerHTML='';
-  if(!items.length){status.textContent='no games found';return;}
-  for(var i=0;i<items.length;i++){(function(game){
-    var btn=document.createElement('button');btn.className='card';
-    if(game.url===active)btn.style.borderColor='rgba(255,255,255,.4)';
-    var img=document.createElement('img');img.src=game.cover;img.alt=game.name;img.onerror=function(){img.style.opacity='.15';};
-    var h3=document.createElement('h3');h3.textContent=game.name;
-    var p=document.createElement('p');p.textContent=game.author||'unknown';
-    btn.appendChild(img);btn.appendChild(h3);btn.appendChild(p);
-    btn.addEventListener('click',function(){active=game.url;render(filter(search.value));window.parent.__cherriLaunchGame&&window.parent.__cherriLaunchGame(game);});
-    grid.appendChild(btn);
-  })(items[i]);}
+  if(!list.length){status.textContent='no games found';return;}
   status.textContent='';
+  list.forEach(function(g){
+    var m=PM[g.provider]||{label:g.provider,color:'#888'};
+    var card=document.createElement('div');card.className='card';
+    var img=document.createElement('img');img.dataset.src=g.cover;img.alt=g.name;img.loading='lazy';
+    img.onerror=function(){this.style.opacity='.15';};
+    var nameDiv=document.createElement('div');nameDiv.className='card-name';nameDiv.textContent=g.name;
+    var badge=document.createElement('span');badge.className='badge';badge.textContent=m.label;
+    badge.style.cssText='background:'+m.color+'22;color:'+m.color+';border:1px solid '+m.color+'55';
+    card.appendChild(img);card.appendChild(nameDiv);card.appendChild(badge);
+    card.onclick=function(){window.parent.__cherriLaunchGame&&window.parent.__cherriLaunchGame(g);};
+    grid.appendChild(card);
+  });
+  var obs=new IntersectionObserver(function(entries,o){
+    entries.forEach(function(e){if(e.isIntersecting){e.target.src=e.target.dataset.src;o.unobserve(e.target);}});
+  },{rootMargin:'100px'});
+  grid.querySelectorAll('img[data-src]').forEach(function(i){obs.observe(i);});
 }
-function filter(q){
-  if(!q)return games;
-  var lq=q.toLowerCase();
-  return games.filter(function(g){return(g.name+' '+g.author+' '+g.special.join(' ')).toLowerCase().indexOf(lq)!==-1;});
-}
-search.addEventListener('input',function(){render(filter(search.value));});
-fetch(ZONES).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(function(data){
-  var raw=Array.isArray(data)?data:(data&&(data.games||data.data)||Object.values(data));
-  games=raw.map(normalize).filter(Boolean).filter(function(g){var n=g.name.toLowerCase();return n.indexOf('suggest')===-1&&n.indexOf('comment')===-1;});
-  render(filter(search.value));
-  if(!games.length)status.textContent='no launchable games found';
-}).catch(function(err){status.textContent='failed: '+err.message;});
+
+provSel.onchange=loadGames;
+sortSel.onchange=applyFilters;
+catSel.onchange=applyFilters;
+search.addEventListener('input',applyFilters);
+loadGames();
 <\/script></body></html>`
 }
 
@@ -1671,6 +1835,7 @@ function icoArrowRight(s)  { return ico('<path d="m12 5 7 7-7 7"/><path d="M5 12
 function icoRefresh(s)     { return ico('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>', s) }
 function icoGlobe(s)         { return ico('<circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/>', s) }
 function icoExternalLink(s)  { return ico('<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>', s) }
+function icoDownload(s)      { return ico('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>', s) }
 
 // Returns true for bare domains ("youtube.com") and full URLs
 function looksLikeUrl(str) {
