@@ -640,7 +640,9 @@ function fallback(n){return 'https://ui-avatars.com/api/?name='+encodeURICompone
 function resolveGnMath(u){
   if(!u)return '';
   if(u.startsWith('http'))return u;
-  return 'https://cdn.jsdelivr.net/gh/freebuisness/html@main/'+u.replace('{HTML_URL}','').replace(/^\//,'');
+  u=u.replace('{HTML_URL}','');
+  while(u.length&&u[0]==='/')u=u.slice(1);
+  return 'https://cdn.jsdelivr.net/gh/freebuisness/html@main/'+u;
 }
 
 async function loadGames(){
@@ -652,7 +654,7 @@ async function loadGames(){
     if(prov==='gn-math'){
       var d=await fetch('https://cdn.jsdelivr.net/gh/freebuisness/assets/zones.json').then(r=>r.json());
       allGames=d.filter(function(g){return g.id!==-1&&!g.name.startsWith('[!]');}).map(function(z,i){
-        var cv=(z.cover||'').replace('{COVER_URL}','').replace(/^\//,'');
+        var cv=(z.cover||'').replace('{COVER_URL}','');while(cv.length&&cv[0]==='/')cv=cv.slice(1);
         return{name:z.name,cover:cv?'https://cdn.jsdelivr.net/gh/freebuisness/covers@main/'+cv:fallback(z.name),url:resolveGnMath(z.url),provider:'gn-math',order:i};
       });
     }else if(prov==='elite'){
@@ -667,7 +669,7 @@ async function loadGames(){
       var d=await fetch('https://cdn.jsdelivr.net/gh/PeteZah-G/singlefile-json@main/search.json').then(r=>r.json());
       allGames=(d.games||[]).map(function(g,i){
         var url=g.url||'';
-        if(url&&!url.endsWith('index.html')&&!url.match(/\.\w+$/))url=url.replace(/\/$/,'')+'/index.html';
+        if(url&&!url.endsWith('index.html')&&url.split('/').pop().lastIndexOf('.')<0)url=url.endsWith('/')?url+'index.html':url+'/index.html';
         return{name:g.label||'Unknown',cover:g.imageUrl||fallback(g.label||'?'),url:url,provider:'petezah',order:i,categories:g.categories||[]};
       });
     }else if(prov==='sea-bean'){
@@ -676,7 +678,7 @@ async function loadGames(){
       allGames=d.map(function(g,i){
         var html=g.html||g.url||'';
         if(html.includes('{HTML_URL}'))html=html.replace('{HTML_URL}',smBase+'games/');
-        else if(!html.startsWith('http'))html=smBase+'games/'+html.replace(/^\//,'');
+        else if(!html.startsWith('http')){while(html.length&&html[0]==='/')html=html.slice(1);html=smBase+'games/'+html;}
         var cv=(g.cover||g.img||'').replace('{COVER_URL}/','');
         var cover=cv.startsWith('http')?cv:(cv?smBase+'Icon/'+cv:fallback(g.name||'?'));
         return{name:g.name||g.id||'Unknown',cover:cover,url:html,provider:'sea-bean',order:i};
@@ -685,8 +687,8 @@ async function loadGames(){
       var d=await fetch('https://cdn.jsdelivr.net/gh/DominumNetwork/dominum@main/src/assets/libraries/seraph/games.json').then(r=>r.json());
       var srBase='https://cdn.jsdelivr.net/gh/a456pur/seraph@main/';
       allGames=d.map(function(g,i){
-        var p=g.url.endsWith('index.html')?g.url:g.url.replace(/\/?$/,'/index.html');
-        var url=p.startsWith('http')?p:srBase+p.replace(/^\//,'');
+        var p=g.url.endsWith('index.html')?g.url:(g.url.endsWith('/')?g.url+'index.html':g.url+'/index.html');
+        while(p.length&&p[0]==='/')p=p.slice(1);var url=p.startsWith('http')?p:srBase+p;
         return{name:g.name,cover:g.img||fallback(g.name),url:url,provider:'seraph',order:i};
       });
     }else if(prov==='blox'){
@@ -694,8 +696,8 @@ async function loadGames(){
       var blBase='https://cdn.jsdelivr.net/gh/tharun9772/tharun9772.github.io@main/';
       allGames=d.map(function(g,i){
         var u=(g.url||'').replace('/app-viewer/?view=/','');
-        if(!u.endsWith('index.html'))u=u.replace(/\/?$/,'/')+('index.html');
-        var url=u.startsWith('http')?u:blBase+u.replace(/^\//,'');
+        if(!u.endsWith('index.html'))u=(u.endsWith('/')?u:u+'/')+'index.html';
+        while(u.length&&u[0]==='/')u=u.slice(1);var url=u.startsWith('http')?u:blBase+u;
         return{name:g.name,cover:g.img||fallback(g.name),url:url,provider:'blox',order:i};
       });
     }else if(prov==='truffled'){
