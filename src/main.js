@@ -583,7 +583,7 @@ function removeWatchOverlay() {
 // ── srcdoc builders ───────────────────────────────────────────────────────
 
 function buildGamesSrcdoc() {
-  const css = `*{box-sizing:border-box;margin:0;padding:0}html,body{width:100%;height:100%;background:transparent;color:#e0e0e0;font-family:system-ui,-apple-system,sans-serif;overflow:hidden}body{display:flex;flex-direction:column}select,input{font:inherit;color:#e0e0e0;outline:none}.controls{display:flex;gap:8px;padding:12px;flex-shrink:0;flex-wrap:wrap;align-items:center}.ctrl{padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);font-size:12px;cursor:pointer}#search{flex:1;min-width:140px}#search::placeholder{color:rgba(255,255,255,.25)}.grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));align-content:start;gap:12px;overflow-y:auto;padding:0 12px 12px}.card{border-radius:12px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);cursor:pointer;transition:.15s;overflow:hidden;display:flex;flex-direction:column;position:relative}.card:hover{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.07);transform:translateY(-2px)}.card img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;background:rgba(255,255,255,.05)}.card-name{padding:6px 8px;font-size:11px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.badge{position:absolute;top:6px;right:6px;font-size:8px;font-weight:700;letter-spacing:.04em;padding:2px 5px;border-radius:4px;text-transform:uppercase}.status{color:rgba(255,255,255,.25);font-size:12px;padding:0 12px 8px;flex-shrink:0}`
+  const css = `*{box-sizing:border-box;margin:0;padding:0}html,body{width:100%;height:100%;background:transparent;color:#e0e0e0;font-family:system-ui,-apple-system,sans-serif;overflow:hidden}body{display:flex;flex-direction:column}select,input{font:inherit;color:#e0e0e0;outline:none}.controls{display:flex;gap:8px;padding:12px;flex-shrink:0;flex-wrap:wrap;align-items:center}.ctrl{padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);font-size:12px;cursor:pointer}#search{flex:1;min-width:140px}#search::placeholder{color:rgba(255,255,255,.25)}.grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));align-content:start;gap:12px;overflow-y:auto;padding:0 12px 12px}.card{border-radius:12px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);cursor:pointer;transition:.15s;overflow:hidden;display:flex;flex-direction:column;position:relative}.card:hover{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.07);transform:translateY(-2px)}.img-wrap{width:100%;padding-bottom:100%;position:relative;overflow:hidden;background:rgba(255,255,255,.05);flex-shrink:0}.img-wrap img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}.card-name{padding:6px 8px;font-size:11px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.badge{position:absolute;top:6px;right:6px;font-size:8px;font-weight:700;letter-spacing:.04em;padding:2px 5px;border-radius:4px;text-transform:uppercase}.status{color:rgba(255,255,255,.25);font-size:12px;padding:0 12px 8px;flex-shrink:0}`
 
   const provMeta = {
     'gn-math':  { label: 'GN-Math',   color: '#00bfff' },
@@ -754,15 +754,17 @@ function render(list){
   list.forEach(function(g){
     var m=PM[g.provider]||{label:g.provider,color:'#888'};
     var card=document.createElement('div');card.className='card';
+    var wrap=document.createElement('div');wrap.className='img-wrap';
     var img=document.createElement('img');
     img.src=g.cover;
     img.alt=g.name;
     img.loading='lazy';
     img.onerror=function(){this.style.opacity='.15';};
+    wrap.appendChild(img);
     var nameDiv=document.createElement('div');nameDiv.className='card-name';nameDiv.textContent=g.name;
     var badge=document.createElement('span');badge.className='badge';badge.textContent=m.label;
     badge.style.cssText='background:'+m.color+'22;color:'+m.color+';border:1px solid '+m.color+'55';
-    card.appendChild(img);card.appendChild(nameDiv);card.appendChild(badge);
+    card.appendChild(wrap);card.appendChild(nameDiv);card.appendChild(badge);
     card.onclick=function(){window.parent.__cherriLaunchGame&&window.parent.__cherriLaunchGame(g);};
     grid.appendChild(card);
   });
