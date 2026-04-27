@@ -513,7 +513,7 @@ function showGameOverlay(game) {
       </div>
     </div>
     <iframe id="game-iframe" class="app-iframe"
-      sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock allow-same-origin"
+      sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock"
       allowfullscreen></iframe>`
   document.getElementById('orbit-root').appendChild(el)
   document.getElementById('close-game-btn').addEventListener('click', removeGameOverlay)
@@ -1299,7 +1299,6 @@ function loadScriptOnce(src) {
   return new Promise((resolve, reject) => {
     const s = document.createElement('script')
     s.src = src
-    s.crossOrigin = 'anonymous'
     s.onload  = resolve
     s.onerror = () => reject(new Error('Script load failed: ' + src))
     document.head.appendChild(s)
