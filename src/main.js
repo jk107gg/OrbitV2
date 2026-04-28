@@ -1,10 +1,17 @@
 import './style.css'
 import { initializeApp }   from 'firebase/app'
 import {
-  getDatabase, ref, push, set,
+  getDatabase, ref, push, set, remove,
   onValue, onChildAdded,
   onDisconnect, serverTimestamp,
 } from 'firebase/database'
+import {
+  getAuth,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+} from 'firebase/auth'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA — add/remove entries here; UI updates automatically
@@ -59,46 +66,117 @@ const THEMES = {
 // Flat array used wherever iteration is needed (settings swatches, etc.)
 const ACCENT_COLORS = Object.values(THEMES)
 
-// ── Firebase / Chat ───────────────────────────────────────────────────────
+// ── Firebase / Auth / Chat ────────────────────────────────────────────────
 
-const FIREBASE_DB_URL = 'https://nu-chat-92feb-default-rtdb.firebaseio.com/'
-const CHAT_NICK_KEY   = 'orbit_chat_nickname'
+const FIREBASE_DB_URL   = 'https://nu-chat-92feb-default-rtdb.firebaseio.com/'
+const CHAT_NICK_KEY     = 'orbit_chat_nickname'
+const AUTH_EMAIL_DOMAIN = 'orbitapp.gg'
 
-const _chatNick = (() => {
+// Guest fallback nick used when not logged in
+const _guestNick = (() => {
   let n = localStorage.getItem(CHAT_NICK_KEY)
-  if (!n) {
-    n = 'Guest_' + Math.floor(1000 + Math.random() * 9000)
-    localStorage.setItem(CHAT_NICK_KEY, n)
-  }
+  if (!n) { n = 'Guest_' + Math.floor(1000 + Math.random() * 9000); localStorage.setItem(CHAT_NICK_KEY, n) }
   return n
 })()
 
-const _fbApp = initializeApp({ databaseURL: FIREBASE_DB_URL })
-const _fbDb  = getDatabase(_fbApp)
+let _authUser    = null   // Firebase Auth user object
+let _accountName = null   // username string from users node
 
-// Presence — set on connect, auto-remove on disconnect
-onValue(ref(_fbDb, '.info/connected'), snap => {
-  if (!snap.val()) return
-  const presenceRef = ref(_fbDb, `presence/${_chatNick}`)
-  set(presenceRef, { nickname: _chatNick, since: serverTimestamp() })
-  onDisconnect(presenceRef).remove()
-})
+function _currentNick() { return _accountName || _guestNick }
 
-// Online count — keep updating #online-count whenever it's in DOM
+const _fbApp  = initializeApp({ databaseURL: FIREBASE_DB_URL })
+const _fbDb   = getDatabase(_fbApp)
+const _fbAuth = getAuth(_fbApp)
+
+// ── Presence ──────────────────────────────────────────────────────────────
+
+let _presenceKey = null
+
+function _setPresence() {
+  // Clear old key if nick changed
+  if (_presenceKey && _presenceKey !== _currentNick()) {
+    remove(ref(_fbDb, `presence/${_presenceKey}`)).catch(() => {})
+  }
+  _presenceKey = _currentNick()
+  const pRef = ref(_fbDb, `presence/${_presenceKey}`)
+  set(pRef, { username: _presenceKey, uid: _authUser?.uid ?? null, since: serverTimestamp() })
+  onDisconnect(pRef).remove()
+}
+
+onValue(ref(_fbDb, '.info/connected'), snap => { if (snap.val()) _setPresence() })
+
 onValue(ref(_fbDb, 'presence'), snap => {
   const el = document.getElementById('online-count')
   if (el) el.textContent = snap.numChildren()
 })
 
-// Chat view state
+// ── Auth helpers ──────────────────────────────────────────────────────────
+
+function _dbGet(path) {
+  return new Promise(resolve =>
+    onValue(ref(_fbDb, path), s => resolve(s.val()), { onlyOnce: true })
+  )
+}
+
+async function _registerAccount(username, password) {
+  const lc = username.trim().toLowerCase()
+  if (!/^[a-z0-9_]{3,20}$/.test(lc)) throw new Error('Username must be 3–20 chars: letters, numbers, underscore')
+  if (password.length < 6) throw new Error('Password must be at least 6 characters')
+  const existing = await _dbGet(`usernames/${lc}`)
+  if (existing) throw new Error('Username already taken')
+  const cred = await createUserWithEmailAndPassword(_fbAuth, `${lc}@${AUTH_EMAIL_DOMAIN}`, password)
+  const uid  = cred.user.uid
+  const displayName = username.trim()
+  await set(ref(_fbDb, `users/${uid}`), { username: displayName, uid, createdAt: serverTimestamp(), bio: '' })
+  await set(ref(_fbDb, `usernames/${lc}`), uid)
+  return cred.user
+}
+
+async function _loginAccount(username, password) {
+  const lc = username.trim().toLowerCase()
+  return signInWithEmailAndPassword(_fbAuth, `${lc}@${AUTH_EMAIL_DOMAIN}`, password)
+}
+
+async function _logoutAccount() {
+  if (_presenceKey) remove(ref(_fbDb, `presence/${_presenceKey}`)).catch(() => {})
+  return signOut(_fbAuth)
+}
+
+async function _dmKey(otherUsername) {
+  if (!_authUser) return null
+  const theirUid = await _dbGet(`usernames/${otherUsername.trim().toLowerCase()}`)
+  if (!theirUid) return null
+  return [_authUser.uid, theirUid].sort().join('_')
+}
+
+onAuthStateChanged(_fbAuth, async user => {
+  _authUser = user
+  if (user) {
+    _accountName = await _dbGet(`users/${user.uid}/username`)
+  } else {
+    _accountName = null
+  }
+  _setPresence()
+  // Re-render profile/chat header if open
+  if (typeof swapView === 'function' && typeof state !== 'undefined') {
+    if (state.view === 'profile') swapView()
+    // Update nick display in chat header if visible
+    const nickEl = document.getElementById('chat-nick-display')
+    if (nickEl) nickEl.textContent = _currentNick()
+  }
+})
+
+// ── Chat state ────────────────────────────────────────────────────────────
+
 let _chatMode      = 'global'
 let _chatRoom      = ''
+let _chatDmPartner = ''   // display name of DM partner
 let _chatActiveRef = null
 let _chatUnsub     = null
 
 function _chatMessagesRef() {
   return _chatMode === 'dm'
-    ? ref(_fbDb, `dms/${_chatRoom}`)
+    ? ref(_fbDb, `dms/${_chatRoom}/messages`)
     : ref(_fbDb, 'messages')
 }
 
@@ -116,12 +194,13 @@ function _renderChatMsg(snap) {
   if (!box) return
   const d = snap.val()
   if (!d?.text) return
-  const isSelf = d.nickname === _chatNick
-  const wrap = document.createElement('div')
+  const sender  = d.username || d.nickname || 'Unknown'
+  const isSelf  = sender === _currentNick()
+  const wrap    = document.createElement('div')
   wrap.className = 'flex flex-col gap-0.5 max-w-[80%] ' +
     (isSelf ? 'self-end items-end ml-auto' : 'self-start items-start')
   wrap.innerHTML = `
-    <span class="text-[10px] text-white/25 px-1">${_escHtml(d.nickname)}</span>
+    <span class="text-[10px] text-white/25 px-1">${_escHtml(sender)}</span>
     <div class="px-3 py-2 rounded-2xl text-sm break-words leading-relaxed
       ${isSelf
         ? 'bg-white/[0.12] text-white rounded-br-sm'
@@ -151,14 +230,14 @@ function _loadChatMessages() {
 function _applyChatTabStyles(mode) {
   const on  = 'px-4 py-1.5 rounded-full text-xs border border-white/35 text-white bg-white/[0.09] transition-colors cursor-pointer'
   const off = 'px-4 py-1.5 rounded-full text-xs border border-white/10 text-white/40 bg-white/[0.03] hover:bg-white/[0.06] transition-colors cursor-pointer'
-  const gTab  = document.getElementById('chat-tab-global')
-  const dTab  = document.getElementById('chat-tab-dm')
-  const rIn   = document.getElementById('chat-room-input')
-  if (gTab)  gTab.className  = mode === 'global' ? on : off
-  if (dTab)  dTab.className  = mode === 'dm'     ? on : off
-  if (rIn) {
-    rIn.style.opacity       = mode === 'dm' ? '1' : '0'
-    rIn.style.pointerEvents = mode === 'dm' ? ''  : 'none'
+  const gTab = document.getElementById('chat-tab-global')
+  const dTab = document.getElementById('chat-tab-dm')
+  const dIn  = document.getElementById('chat-dm-input')
+  if (gTab)  gTab.className = mode === 'global' ? on : off
+  if (dTab)  dTab.className = mode === 'dm'     ? on : off
+  if (dIn) {
+    dIn.style.opacity       = mode === 'dm' ? '1' : '0'
+    dIn.style.pointerEvents = mode === 'dm' ? ''  : 'none'
   }
 }
 
@@ -175,7 +254,7 @@ function _sendChatMessage() {
   const text = input.value.trim()
   if (!text) return
   if (_chatMode === 'dm' && !_chatRoom.trim()) return
-  push(_chatMessagesRef(), { nickname: _chatNick, text, timestamp: serverTimestamp() })
+  push(_chatMessagesRef(), { username: _currentNick(), uid: _authUser?.uid ?? null, text, timestamp: serverTimestamp() })
   input.value = ''
   input.focus()
 }
@@ -199,7 +278,7 @@ function _appendAiMsgBubble(role, text) {
 
   const label = document.createElement('span')
   label.className = 'text-[10px] text-white/25 px-1'
-  label.textContent = isSelf ? _chatNick : 'AI'
+  label.textContent = isSelf ? _currentNick() : 'AI'
 
   const bubble = document.createElement('div')
   bubble.className =
@@ -1086,6 +1165,10 @@ function tvViewHTML() {
 function chatViewHTML() {
   const tabOn  = 'px-4 py-1.5 rounded-full text-xs border border-white/35 text-white bg-white/[0.09] transition-colors cursor-pointer'
   const tabOff = 'px-4 py-1.5 rounded-full text-xs border border-white/10 text-white/40 bg-white/[0.03] hover:bg-white/[0.06] transition-colors cursor-pointer'
+  const nick   = _currentNick()
+  const isLoggedIn = !!_authUser
+  const headerTitle = _chatMode === 'dm' && _chatDmPartner ? `DM · ${_escHtml(_chatDmPartner)}` : 'Global Chat'
+  const inputPlaceholder = _chatMode === 'dm' && !_chatDmPartner ? 'Enter username to DM…' : 'Message…'
   return `
     <div class="flex flex-col w-full" style="height:calc(100dvh - 7.5rem)">
 
@@ -1093,11 +1176,13 @@ function chatViewHTML() {
       <div class="flex items-center justify-between px-4 py-3 mb-3 flex-shrink-0
                   bg-white/[0.03] border border-white/[0.08] rounded-2xl">
         <div class="flex items-center gap-2.5">
-          <span class="text-white/80 font-semibold text-sm tracking-wide">Chat</span>
+          <span class="text-white/80 font-semibold text-sm tracking-wide">${headerTitle}</span>
           <span class="text-white/20 text-xs">·</span>
-          <span class="text-white/30 text-xs font-mono">${_escHtml(_chatNick)}</span>
+          <span id="chat-nick-display" class="text-white/30 text-xs font-mono">${_escHtml(nick)}</span>
+          ${isLoggedIn ? '' : '<span class="text-white/20 text-[10px] font-mono">(guest)</span>'}
         </div>
-        <div class="flex items-center gap-1.5">
+        <div class="flex items-center gap-2">
+          ${!isLoggedIn ? `<button id="chat-login-btn" class="text-[10px] px-3 py-1 rounded-full border border-white/15 text-white/40 hover:text-white/80 hover:border-white/30 transition-colors cursor-pointer">Sign in</button>` : ''}
           <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0"
                 style="box-shadow:0 0 6px rgba(52,211,153,0.7)"></span>
           <span id="online-count" class="text-white/30 text-xs">0</span>
@@ -1109,13 +1194,14 @@ function chatViewHTML() {
       <div class="flex items-center gap-2 mb-3 flex-shrink-0">
         <button id="chat-tab-global" class="${_chatMode === 'global' ? tabOn : tabOff}">Global</button>
         <button id="chat-tab-dm"     class="${_chatMode === 'dm'     ? tabOn : tabOff}">DM</button>
-        <input id="chat-room-input" type="text" placeholder="room code…"
-               value="${_escHtml(_chatRoom)}"
+        <input id="chat-dm-input" type="text" placeholder="Username to DM…"
+               value="${_escHtml(_chatDmPartner)}"
                autocomplete="off" spellcheck="false"
                class="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-full
                       px-3 py-1.5 text-xs text-white/70 outline-none placeholder-white/20
-                      font-mono transition-opacity"
+                      transition-opacity"
                style="opacity:${_chatMode === 'dm' ? '1' : '0'};pointer-events:${_chatMode === 'dm' ? 'auto' : 'none'}">
+        <div id="chat-dm-status" class="text-[10px] text-red-400 flex-shrink-0" style="display:none"></div>
       </div>
 
       <!-- Messages -->
@@ -1127,7 +1213,7 @@ function chatViewHTML() {
       <form id="chat-form"
             class="flex items-center gap-2 mt-3 flex-shrink-0
                    bg-white/[0.04] border border-white/[0.08] rounded-full px-4 py-2.5">
-        <input id="chat-input" type="text" placeholder="Message…"
+        <input id="chat-input" type="text" placeholder="${inputPlaceholder}"
                autocomplete="off" maxlength="500"
                class="flex-1 bg-transparent outline-none text-white/80 text-sm
                       placeholder-white/20 caret-white/40 min-w-0">
@@ -1383,6 +1469,91 @@ async function browserNavigate(input) {
   iframe.src = finalSrc
 }
 
+function profileViewHTML() {
+  if (_authUser && _accountName) {
+    // Logged-in state
+    const initial = _accountName.charAt(0).toUpperCase()
+    return `
+    <div class="flex flex-col gap-5 w-full max-w-sm mx-auto pt-4">
+
+      <!-- Avatar + name -->
+      <div class="flex flex-col items-center gap-3 py-6
+                  bg-white/[0.03] border border-white/[0.07] rounded-3xl">
+        <div class="w-20 h-20 rounded-full flex items-center justify-center text-3xl font-black select-none"
+             style="background:rgba(var(--accent-rgb),.15);color:var(--accent-color);
+                    box-shadow:0 0 0 2px rgba(var(--accent-rgb),.3),0 0 24px rgba(var(--accent-rgb),.15)">
+          ${_escHtml(initial)}
+        </div>
+        <div class="text-center">
+          <div class="text-white font-bold text-xl tracking-wide">${_escHtml(_accountName)}</div>
+          <div class="text-white/25 text-xs mt-0.5 font-mono">${_escHtml(_authUser.uid.slice(0,8))}…</div>
+        </div>
+      </div>
+
+      <!-- Bio -->
+      <div class="bg-white/[0.03] border border-white/[0.07] rounded-2xl px-4 py-3">
+        <label class="text-white/30 text-[10px] uppercase tracking-widest block mb-2">Bio</label>
+        <textarea id="profile-bio" rows="2" maxlength="160" placeholder="Write something about yourself…"
+                  class="w-full bg-transparent outline-none text-white/70 text-sm placeholder-white/20
+                         resize-none caret-white/40 leading-relaxed"></textarea>
+      </div>
+
+      <!-- Actions -->
+      <button id="profile-signout"
+              class="w-full py-3 rounded-2xl border border-white/10 text-white/40 text-sm
+                     hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 transition-colors cursor-pointer">
+        Sign out
+      </button>
+    </div>`
+  }
+
+  // Not logged in — show auth form
+  return `
+    <div class="flex flex-col gap-4 w-full max-w-xs mx-auto pt-4">
+
+      <!-- Brand -->
+      <div class="text-center mb-2 select-none">
+        <div class="text-2xl font-black tracking-tight" style="color:var(--accent-color)">ORBIT</div>
+        <div class="text-white/25 text-xs mt-1">Create an account or sign in</div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="flex gap-2 p-1 bg-white/[0.03] border border-white/[0.07] rounded-full">
+        <button id="auth-tab-login"    class="auth-tab auth-tab-active flex-1 py-1.5 rounded-full text-xs font-semibold transition-colors">Sign In</button>
+        <button id="auth-tab-register" class="auth-tab flex-1 py-1.5 rounded-full text-xs font-semibold transition-colors">Register</button>
+      </div>
+
+      <!-- Form -->
+      <div class="flex flex-col gap-3 bg-white/[0.03] border border-white/[0.07] rounded-2xl p-5">
+        <div class="flex flex-col gap-1.5">
+          <label class="text-white/30 text-[10px] uppercase tracking-widest">Username</label>
+          <input id="auth-username" type="text" autocomplete="username" autocorrect="off"
+                 autocapitalize="off" spellcheck="false" maxlength="20"
+                 placeholder="your_username"
+                 class="bg-white/[0.05] border border-white/[0.1] rounded-xl px-3 py-2.5
+                        text-white/85 text-sm outline-none placeholder-white/20 font-mono
+                        focus:border-white/25 transition-colors caret-white/50">
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-white/30 text-[10px] uppercase tracking-widest">Password</label>
+          <input id="auth-password" type="password" autocomplete="current-password" maxlength="128"
+                 placeholder="••••••••"
+                 class="bg-white/[0.05] border border-white/[0.1] rounded-xl px-3 py-2.5
+                        text-white/85 text-sm outline-none placeholder-white/20
+                        focus:border-white/25 transition-colors caret-white/50">
+        </div>
+        <div id="auth-error" class="text-red-400 text-xs hidden"></div>
+        <button id="auth-submit"
+                class="w-full py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer
+                       text-black"
+                style="background:var(--accent-color);box-shadow:0 0 12px rgba(var(--accent-rgb),.3)">
+          Sign In
+        </button>
+      </div>
+
+    </div>`
+}
+
 function viewHTML() {
   switch (state.view) {
     case 'home':     return homeViewHTML()
@@ -1393,6 +1564,7 @@ function viewHTML() {
     case 'chat':     return chatViewHTML()
     case 'ai':       return aiViewHTML()
     case 'browser':  return browserViewHTML()
+    case 'profile':  return profileViewHTML()
     default:         return placeholderViewHTML(state.view)
   }
 }
@@ -1478,38 +1650,114 @@ function bindViewEvents() {
     })
 
     document.getElementById('chat-tab-global')?.addEventListener('click', () => {
+      _chatDmPartner = ''
       _switchChat('global')
     })
 
     document.getElementById('chat-tab-dm')?.addEventListener('click', () => {
-      const roomInput = document.getElementById('chat-room-input')
-      const room = roomInput?.value.trim() || ''
-      // Toggle DM mode; if no room yet, just reveal the input
-      if (!room) {
-        _applyChatTabStyles('dm')
-        _chatMode = 'dm'
-        roomInput?.focus()
-      } else {
-        _switchChat('dm', room)
-      }
+      const dmInput = document.getElementById('chat-dm-input')
+      _applyChatTabStyles('dm')
+      _chatMode = 'dm'
+      dmInput?.focus()
     })
 
-    document.getElementById('chat-room-input')?.addEventListener('keydown', e => {
+    document.getElementById('chat-dm-input')?.addEventListener('keydown', async e => {
       if (e.key !== 'Enter') return
-      const room = e.target.value.trim()
-      if (room) _switchChat('dm', room)
+      const target = e.target.value.trim()
+      if (!target) return
+      const statusEl = document.getElementById('chat-dm-status')
+      if (statusEl) { statusEl.style.display = 'none'; statusEl.textContent = '' }
+      if (!_authUser) {
+        // Guest fallback: use raw input as room code
+        _chatDmPartner = target
+        _switchChat('dm', target)
+        return
+      }
+      if (target.toLowerCase() === _currentNick().toLowerCase()) {
+        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = "That's you!" }
+        return
+      }
+      const key = await _dmKey(target)
+      if (!key) {
+        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'User not found' }
+        return
+      }
+      _chatDmPartner = target
+      _switchChat('dm', key)
+      // Update header title
+      const hdr = document.querySelector('#chat-messages')?.closest('.flex.flex-col')?.querySelector('.font-semibold')
+      if (hdr) hdr.textContent = `DM · ${target}`
     })
 
-    document.getElementById('chat-room-input')?.addEventListener('input', e => {
-      // If already in DM mode, live-reload when user changes room
-      if (_chatMode === 'dm') {
-        _chatRoom = e.target.value.trim()
-        if (_chatRoom) _loadChatMessages()
-      }
+    document.getElementById('chat-login-btn')?.addEventListener('click', () => {
+      setState({ view: 'profile' })
     })
 
     // Focus input on open
     document.getElementById('chat-input')?.focus()
+  }
+
+  if (state.view === 'profile') {
+    // Auth form tab switching
+    let _authMode = 'login'
+
+    const tabLogin    = document.getElementById('auth-tab-login')
+    const tabRegister = document.getElementById('auth-tab-register')
+    const submitBtn   = document.getElementById('auth-submit')
+    const errorEl     = document.getElementById('auth-error')
+
+    function _setAuthMode(mode) {
+      _authMode = mode
+      const activeClass = 'bg-white/[0.1] text-white'
+      const inactiveClass = 'text-white/35'
+      if (tabLogin)    tabLogin.className    = 'auth-tab flex-1 py-1.5 rounded-full text-xs font-semibold transition-colors ' + (mode === 'login'    ? activeClass : inactiveClass)
+      if (tabRegister) tabRegister.className = 'auth-tab flex-1 py-1.5 rounded-full text-xs font-semibold transition-colors ' + (mode === 'register' ? activeClass : inactiveClass)
+      if (submitBtn)   submitBtn.textContent = mode === 'login' ? 'Sign In' : 'Create Account'
+      if (errorEl)     { errorEl.classList.add('hidden'); errorEl.textContent = '' }
+    }
+
+    tabLogin?.addEventListener('click',    () => _setAuthMode('login'))
+    tabRegister?.addEventListener('click', () => _setAuthMode('register'))
+
+    async function _handleAuthSubmit() {
+      const username = document.getElementById('auth-username')?.value || ''
+      const password = document.getElementById('auth-password')?.value || ''
+      if (errorEl) { errorEl.classList.add('hidden'); errorEl.textContent = '' }
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '…' }
+      try {
+        if (_authMode === 'register') {
+          await _registerAccount(username, password)
+        } else {
+          await _loginAccount(username, password)
+        }
+        // onAuthStateChanged will fire and call swapView()
+      } catch (err) {
+        let msg = err.message || 'Something went wrong'
+        // Clean up Firebase error messages
+        if (msg.includes('email-already-in-use') || msg.includes('already taken')) msg = 'Username already taken'
+        else if (msg.includes('wrong-password') || msg.includes('invalid-credential')) msg = 'Incorrect username or password'
+        else if (msg.includes('too-many-requests')) msg = 'Too many attempts — try again later'
+        if (errorEl) { errorEl.classList.remove('hidden'); errorEl.textContent = msg }
+      } finally {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = _authMode === 'login' ? 'Sign In' : 'Create Account' }
+      }
+    }
+
+    submitBtn?.addEventListener('click', _handleAuthSubmit)
+    document.getElementById('auth-password')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') _handleAuthSubmit()
+    })
+    document.getElementById('auth-username')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('auth-password')?.focus()
+    })
+
+    // Signed-in actions
+    document.getElementById('profile-signout')?.addEventListener('click', async () => {
+      await _logoutAccount()
+      // onAuthStateChanged fires → swapView()
+    })
+
+    document.getElementById('auth-username')?.focus()
   }
 
   const searchInput = document.getElementById('search-input')
