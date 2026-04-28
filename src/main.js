@@ -5,13 +5,6 @@ import {
   onValue, onChildAdded,
   onDisconnect, serverTimestamp,
 } from 'firebase/database'
-import {
-  getAuth,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-} from 'firebase/auth'
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA — add/remove entries here; UI updates automatically
@@ -68,9 +61,16 @@ const ACCENT_COLORS = Object.values(THEMES)
 
 // ── Firebase / Auth / Chat ────────────────────────────────────────────────
 
-const FIREBASE_DB_URL   = 'https://nu-chat-92feb-default-rtdb.firebaseio.com/'
-const CHAT_NICK_KEY     = 'orbit_chat_nickname'
-const AUTH_EMAIL_DOMAIN = 'orbitapp.gg'
+const FIREBASE_CONFIG = {
+  apiKey:            'AIzaSyAu_7Cl7y692z8WRVCM59gSRrHcfLUw3GA',
+  authDomain:        'nu-chat-92feb.firebaseapp.com',
+  databaseURL:       'https://nu-chat-92feb-default-rtdb.firebaseio.com',
+  projectId:         'nu-chat-92feb',
+  storageBucket:     'nu-chat-92feb.firebasestorage.app',
+  messagingSenderId: '401431459371',
+  appId:             '1:401431459371:web:ecab8ef0a819b28a865c6e',
+}
+const CHAT_NICK_KEY = 'orbit_chat_nickname'
 
 // Guest fallback nick used when not logged in
 const _guestNick = (() => {
@@ -84,16 +84,14 @@ let _accountName = null   // username string from users node
 
 function _currentNick() { return _accountName || _guestNick }
 
-const _fbApp  = initializeApp({ databaseURL: FIREBASE_DB_URL })
-const _fbDb   = getDatabase(_fbApp)
-const _fbAuth = getAuth(_fbApp)
+const _fbApp = initializeApp(FIREBASE_CONFIG)
+const _fbDb  = getDatabase(_fbApp)
 
 // ── Presence ──────────────────────────────────────────────────────────────
 
 let _presenceKey = null
 
 function _setPresence() {
-  // Clear old key if nick changed
   if (_presenceKey && _presenceKey !== _currentNick()) {
     remove(ref(_fbDb, `presence/${_presenceKey}`)).catch(() => {})
   }
@@ -110,7 +108,9 @@ onValue(ref(_fbDb, 'presence'), snap => {
   if (el) el.textContent = snap.numChildren()
 })
 
-// ── Auth helpers ──────────────────────────────────────────────────────────
+// ── Auth helpers (RTDB + Web Crypto — no Firebase Auth / no email) ─────────
+
+const _SESSION_KEY = 'orbit_session'
 
 function _dbGet(path) {
   return new Promise(resolve =>
@@ -118,28 +118,69 @@ function _dbGet(path) {
   )
 }
 
+async function _sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+function _genId() {
+  return (crypto.randomUUID?.() ?? (Date.now().toString(36) + Math.random().toString(36).slice(2)))
+}
+
+// Restore session from localStorage on page load
+;(function _loadSession() {
+  try {
+    const s = JSON.parse(localStorage.getItem(_SESSION_KEY) || 'null')
+    if (s?.uid && s?.username) {
+      _authUser    = { uid: s.uid }
+      _accountName = s.username
+    }
+  } catch { /* ignore corrupt data */ }
+})()
+
 async function _registerAccount(username, password) {
   const lc = username.trim().toLowerCase()
-  if (!/^[a-z0-9_]{3,20}$/.test(lc)) throw new Error('Username must be 3–20 chars: letters, numbers, underscore')
-  if (password.length < 6) throw new Error('Password must be at least 6 characters')
+  if (!/^[a-z0-9_]{3,20}$/.test(lc))
+    throw new Error('Username: 3–20 chars, letters/numbers/underscore only')
+  if (password.length < 6)
+    throw new Error('Password must be at least 6 characters')
   const existing = await _dbGet(`usernames/${lc}`)
   if (existing) throw new Error('Username already taken')
-  const cred = await createUserWithEmailAndPassword(_fbAuth, `${lc}@${AUTH_EMAIL_DOMAIN}`, password)
-  const uid  = cred.user.uid
+  const uid  = _genId()
+  const salt = _genId()
+  const hash = await _sha256(salt + password)
   const displayName = username.trim()
-  await set(ref(_fbDb, `users/${uid}`), { username: displayName, uid, createdAt: serverTimestamp(), bio: '' })
+  await set(ref(_fbDb, `users/${uid}`), {
+    username: displayName, uid, salt, hash,
+    createdAt: serverTimestamp(), bio: '',
+  })
   await set(ref(_fbDb, `usernames/${lc}`), uid)
-  return cred.user
+  _authUser    = { uid }
+  _accountName = displayName
+  localStorage.setItem(_SESSION_KEY, JSON.stringify({ uid, username: displayName }))
+  _setPresence()
 }
 
 async function _loginAccount(username, password) {
-  const lc = username.trim().toLowerCase()
-  return signInWithEmailAndPassword(_fbAuth, `${lc}@${AUTH_EMAIL_DOMAIN}`, password)
+  const lc  = username.trim().toLowerCase()
+  const uid = await _dbGet(`usernames/${lc}`)
+  if (!uid) throw new Error('User not found')
+  const data = await _dbGet(`users/${uid}`)
+  if (!data?.hash) throw new Error('User not found')
+  const hash = await _sha256(data.salt + password)
+  if (hash !== data.hash) throw new Error('Incorrect password')
+  _authUser    = { uid }
+  _accountName = data.username
+  localStorage.setItem(_SESSION_KEY, JSON.stringify({ uid, username: data.username }))
+  _setPresence()
 }
 
 async function _logoutAccount() {
   if (_presenceKey) remove(ref(_fbDb, `presence/${_presenceKey}`)).catch(() => {})
-  return signOut(_fbAuth)
+  _authUser    = null
+  _accountName = null
+  localStorage.removeItem(_SESSION_KEY)
+  _setPresence()
 }
 
 async function _dmKey(otherUsername) {
@@ -148,23 +189,6 @@ async function _dmKey(otherUsername) {
   if (!theirUid) return null
   return [_authUser.uid, theirUid].sort().join('_')
 }
-
-onAuthStateChanged(_fbAuth, async user => {
-  _authUser = user
-  if (user) {
-    _accountName = await _dbGet(`users/${user.uid}/username`)
-  } else {
-    _accountName = null
-  }
-  _setPresence()
-  // Re-render profile/chat header if open
-  if (typeof swapView === 'function' && typeof state !== 'undefined') {
-    if (state.view === 'profile') swapView()
-    // Update nick display in chat header if visible
-    const nickEl = document.getElementById('chat-nick-display')
-    if (nickEl) nickEl.textContent = _currentNick()
-  }
-})
 
 // ── Chat state ────────────────────────────────────────────────────────────
 
@@ -1730,7 +1754,7 @@ function bindViewEvents() {
         } else {
           await _loginAccount(username, password)
         }
-        // onAuthStateChanged will fire and call swapView()
+        swapView()
       } catch (err) {
         let msg = err.message || 'Something went wrong'
         // Clean up Firebase error messages
@@ -1754,7 +1778,7 @@ function bindViewEvents() {
     // Signed-in actions
     document.getElementById('profile-signout')?.addEventListener('click', async () => {
       await _logoutAccount()
-      // onAuthStateChanged fires → swapView()
+      swapView()
     })
 
     document.getElementById('auth-username')?.focus()
