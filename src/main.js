@@ -583,7 +583,7 @@ function removeWatchOverlay() {
 // ── srcdoc builders ───────────────────────────────────────────────────────
 
 function buildGamesSrcdoc() {
-  const css = `*{box-sizing:border-box;margin:0;padding:0}html{width:100%;height:100%}body{width:100%;min-height:100%;background:transparent;color:#e0e0e0;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;overflow-y:auto}select,input{font:inherit;color:#e0e0e0;outline:none}.controls{display:flex;gap:8px;padding:12px;flex-shrink:0;flex-wrap:wrap;align-items:center;position:sticky;top:0;z-index:10;background:rgba(0,0,0,.6);backdrop-filter:blur(12px)}.ctrl{padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);font-size:12px;cursor:pointer}#search{flex:1;min-width:140px}#search::placeholder{color:rgba(255,255,255,.25)}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;padding:12px}.card{border-radius:12px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);cursor:pointer;transition:.15s;overflow:hidden;display:flex;flex-direction:column;position:relative}.card:hover{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.07);transform:translateY(-2px)}.img-wrap{width:100%;padding-bottom:100%;position:relative;overflow:hidden;background:rgba(255,255,255,.05);flex-shrink:0}.img-wrap img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}.card-name{padding:7px 9px;font-size:12px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.badge{position:absolute;top:7px;right:7px;font-size:8px;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:4px;text-transform:uppercase}.status{color:rgba(255,255,255,.25);font-size:12px;padding:0 12px 12px;flex-shrink:0}`
+  const css = `*{box-sizing:border-box;margin:0;padding:0}html{width:100%;height:100%}body{width:100%;min-height:100%;background:transparent;color:#e0e0e0;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;overflow-y:auto}select,input{font:inherit;color:#e0e0e0;outline:none}.controls{display:flex;gap:8px;padding:12px;flex-shrink:0;flex-wrap:wrap;align-items:center;position:sticky;top:0;z-index:10;background:rgba(0,0,0,.6);backdrop-filter:blur(12px)}.ctrl{padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);font-size:12px;cursor:pointer}#search{flex:1;min-width:140px}#search::placeholder{color:rgba(255,255,255,.25)}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;padding:12px;padding-bottom:88px}.card{border-radius:12px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);cursor:pointer;transition:.15s;overflow:hidden;display:flex;flex-direction:column;position:relative}.card:hover{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.07);transform:translateY(-2px)}.img-wrap{width:100%;padding-bottom:100%;position:relative;overflow:hidden;background:rgba(255,255,255,.05);flex-shrink:0}.img-wrap img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}.card-name{padding:7px 9px;font-size:12px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.badge{position:absolute;top:7px;right:7px;font-size:8px;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:4px;text-transform:uppercase}.status{color:rgba(255,255,255,.25);font-size:12px;padding:0 12px 12px;flex-shrink:0}.g-dock{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:100;display:flex;align-items:center;gap:6px;padding:8px 12px;background:rgba(15,15,20,.72);backdrop-filter:blur(20px) saturate(1.4);border:1px solid rgba(255,255,255,.1);border-radius:9999px;box-shadow:0 8px 32px rgba(0,0,0,.55);white-space:nowrap}.g-dock-btn{display:flex;align-items:center;gap:5px;padding:6px 12px;border-radius:9999px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:rgba(255,255,255,.65);font-size:11px;font-weight:600;cursor:pointer;transition:.15s;letter-spacing:.02em}.g-dock-btn:hover{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.2)}.g-dock-sep{width:1px;height:18px;background:rgba(255,255,255,.1);margin:0 2px}`
 
   const provMeta = {
     'gn-math':  { label: 'GN-Math',   color: '#00bfff' },
@@ -629,6 +629,22 @@ function buildGamesSrcdoc() {
 </div>
 <div class="grid" id="grid"></div>
 <div class="status" id="status"></div>
+<div class="g-dock" id="gDock">
+  <button class="g-dock-btn" id="dockBack" title="Back to home">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>Back
+  </button>
+  <div class="g-dock-sep"></div>
+  <button class="g-dock-btn" id="dockTop" title="Scroll to top">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>Top
+  </button>
+  <button class="g-dock-btn" id="dockRandom" title="Random game">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>Random
+  </button>
+  <div class="g-dock-sep"></div>
+  <button class="g-dock-btn" id="dockFS" title="Fullscreen">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>Fullscreen
+  </button>
+</div>
 <script>
 var PM=${JSON.stringify(provMeta)};
 var allGames=[], provSel=document.getElementById('provSel'), sortSel=document.getElementById('sortSel'),
@@ -775,6 +791,19 @@ sortSel.onchange=applyFilters;
 catSel.onchange=applyFilters;
 search.addEventListener('input',applyFilters);
 loadGames();
+
+document.getElementById('dockBack').onclick=function(){window.parent.__cherriGoBack&&window.parent.__cherriGoBack();};
+document.getElementById('dockTop').onclick=function(){window.scrollTo({top:0,behavior:'smooth'});};
+document.getElementById('dockRandom').onclick=function(){
+  if(!allGames.length)return;
+  var g=allGames[Math.floor(Math.random()*allGames.length)];
+  window.parent.__cherriLaunchGame&&window.parent.__cherriLaunchGame(g);
+};
+document.getElementById('dockFS').onclick=function(){
+  var el=document.documentElement;
+  var req=el.requestFullscreen||el.webkitRequestFullscreen||el.mozRequestFullScreen;
+  if(req)req.call(el);
+};
 <\/script></body></html>`
 }
 
@@ -1640,6 +1669,7 @@ document.addEventListener('keydown', e => {
 // Called by srcdoc iframes via window.parent
 window.__cherriLaunchGame  = game       => showGameOverlay(game)
 window.__cherriLaunchWatch = (id, type) => showWatchOverlay(id, type)
+window.__cherriGoBack      = ()         => setState({ view: 'home' })
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ONBOARDING
