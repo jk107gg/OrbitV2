@@ -1,7 +1,7 @@
 import './style.css'
 import { initializeApp }   from 'firebase/app'
 import {
-  getDatabase, ref, push, set, remove,
+  getDatabase, ref, push, set, remove, get,
   onValue, onChildAdded,
   onDisconnect, serverTimestamp,
 } from 'firebase/database'
@@ -10,8 +10,16 @@ import {
 // DATA — add/remove entries here; UI updates automatically
 // ═══════════════════════════════════════════════════════════════════════════
 
-const BRAND   = 'ORBIT'
-const TAGLINE = 'YOUR PORTAL'
+const BRAND       = 'ORBIT'
+const TAGLINE     = 'YOUR PORTAL'
+const APP_VERSION = '1.1.0'
+const CHANGELOG   = [
+  'Real accounts — username & password, no email required',
+  'Direct messages — DM any user by their username',
+  'Live online count & presence tracking',
+  'Game overlay dock with fullscreen & save',
+  'All 8 game providers with badges & search',
+]
 
 const APPS_DATA = [
   { id: 'youtube', name: 'YouTube', icon: 'youtube', url: 'https://youtube.com'         },
@@ -35,7 +43,8 @@ const DOCK_ITEMS = [
 
 const BROWSER_HOME    = 'https://duckduckgo.com'
 const BROWSER_SEARCH  = q => `https://duckduckgo.com/lite/?q=${encodeURIComponent(q)}`
-const PROXY_HOST      = 'https://yousifcantleakthis.bostoncareercounselor.com'
+// ↓ YOUR INTERSTELLAR URL — swap to update
+const PROXY_HOST      = 'https://interstellar-production-c463.up.railway.app'
 
 const TMDB_KEY        = 'fb7bb23f03b6994dafc674c074d01761'
 const WATCH_SOURCES   = [
@@ -112,10 +121,9 @@ onValue(ref(_fbDb, 'presence'), snap => {
 
 const _SESSION_KEY = 'orbit_session'
 
-function _dbGet(path) {
-  return new Promise(resolve =>
-    onValue(ref(_fbDb, path), s => resolve(s.val()), { onlyOnce: true })
-  )
+async function _dbGet(path) {
+  const snap = await get(ref(_fbDb, path))
+  return snap.val()
 }
 
 async function _sha256(str) {
@@ -441,6 +449,7 @@ let state = {
   accentRgb:       ACCENT_COLORS[0].rgb,
   browserUrl:      BROWSER_HOME,
   browserHistory:  [],
+  browserForward:  [],
 }
 
 function setState(patch) {
@@ -672,6 +681,59 @@ function showGameOverlay(game) {
       // CORS fetch failed — fall back to direct src (proxy/truffled-style games)
       if (iframe.isConnected) iframe.src = game.url
     })
+}
+
+function showWhatsNew(prevVer) {
+  document.getElementById('whats-new-overlay')?.remove()
+  const isFirstVisit = !prevVer
+  const el = document.createElement('div')
+  el.id = 'whats-new-overlay'
+  el.style.cssText = 'position:fixed;inset:0;z-index:500;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.75);backdrop-filter:blur(12px);animation:fadeUp .2s ease forwards'
+  el.innerHTML = `
+    <div style="width:100%;max-width:420px;margin:0 16px;background:rgba(12,12,18,.9);border:1px solid rgba(255,255,255,.1);border-radius:24px;padding:32px;display:flex;flex-direction:column;gap:20px;box-shadow:0 24px 64px rgba(0,0,0,.6)">
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.2em;text-transform:uppercase;color:var(--accent-color);opacity:.8">
+          ${isFirstVisit ? 'Welcome to' : 'Updated to'} v${APP_VERSION}
+        </div>
+        <div style="font-size:1.6rem;font-weight:900;color:#fff;letter-spacing:-.03em;line-height:1">
+          ${isFirstVisit ? 'Welcome to ORBIT' : "What's New"}
+        </div>
+      </div>
+      <ul style="display:flex;flex-direction:column;gap:10px;list-style:none;margin:0;padding:0">
+        ${CHANGELOG.map(item => `
+          <li style="display:flex;align-items:flex-start;gap:10px;font-size:13px;color:rgba(255,255,255,.65);line-height:1.4">
+            <span style="color:var(--accent-color);margin-top:1px;flex-shrink:0">✦</span>
+            ${_escHtml(item)}
+          </li>`).join('')}
+      </ul>
+      <div style="display:flex;flex-direction:column;gap:10px;padding-top:4px;border-top:1px solid rgba(255,255,255,.07)">
+        ${!_authUser ? `
+        <div style="font-size:12px;color:rgba(255,255,255,.35);text-align:center">
+          Sign in to save your data across devices
+        </div>
+        <button id="wnSignIn" style="width:100%;padding:12px;border-radius:14px;border:none;font-weight:700;font-size:14px;cursor:pointer;color:#000;background:var(--accent-color);box-shadow:0 0 16px rgba(var(--accent-rgb),.35);transition:.15s">
+          Create Account / Sign In
+        </button>` : `
+        <div style="font-size:12px;color:rgba(255,255,255,.35);text-align:center">
+          Signed in as <strong style="color:rgba(255,255,255,.7)">${_escHtml(_currentNick())}</strong>
+        </div>`}
+        <button id="wnDismiss" style="width:100%;padding:11px;border-radius:14px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:rgba(255,255,255,.5);font-size:13px;cursor:pointer;transition:.15s">
+          ${_authUser ? 'Continue' : 'Continue as Guest'}
+        </button>
+      </div>
+    </div>`
+
+  document.body.appendChild(el)
+
+  document.getElementById('wnSignIn')?.addEventListener('click', () => {
+    localStorage.setItem('orbit_version', APP_VERSION)
+    el.remove()
+    setState({ view: 'profile' })
+  })
+  document.getElementById('wnDismiss')?.addEventListener('click', () => {
+    localStorage.setItem('orbit_version', APP_VERSION)
+    el.remove()
+  })
 }
 
 function removeGameOverlay() {
@@ -1352,29 +1414,41 @@ function comingSoonContentHTML(view) {
 // ── In-app browser ─────────────────────────────────────────────────────────
 
 function browserViewHTML() {
+  const canBack    = state.browserHistory.length > 0
+  const canForward = state.browserForward.length > 0
   return `
     <div class="browser-container">
       <div class="browser-toolbar">
-        <button id="browser-back-btn" class="browser-btn" title="Back">
+        <button id="browser-back-btn" class="browser-btn" title="Back"
+                style="opacity:${canBack ? '1' : '0.25'};pointer-events:${canBack ? 'auto' : 'none'}">
           ${icoArrowLeft(15)}
+        </button>
+        <button id="browser-forward-btn" class="browser-btn" title="Forward"
+                style="opacity:${canForward ? '1' : '0.25'};pointer-events:${canForward ? 'auto' : 'none'}">
+          ${icoArrowRight(15)}
+        </button>
+        <button id="browser-refresh-btn" class="browser-btn" title="Reload">
+          ${icoRefresh(15)}
         </button>
         <button id="browser-home-btn" class="browser-btn" title="Home">
           ${icoGlobe(15)}
         </button>
+
         <input
           id="browser-url-input"
           type="text"
           value="${state.browserUrl}"
-          placeholder="Search DuckDuckGo or enter a URL…"
+          placeholder="Search or enter a URL…"
           class="browser-url-input"
           spellcheck="false"
           autocomplete="off"
         />
+
         <button id="browser-go-btn" class="browser-btn" title="Go">
-          ${icoArrowRight(15)}
+          ${icoSearch(15)}
         </button>
-        <button id="browser-refresh-btn" class="browser-btn" title="Refresh">
-          ${icoRefresh(15)}
+        <button id="browser-fullscreen-btn" class="browser-btn" title="Fullscreen">
+          ${icoMaximize(15)}
         </button>
         <a id="browser-newtab-btn" href="${state.browserUrl}" target="_blank"
            rel="noopener noreferrer" class="browser-btn" title="Open in new tab">
@@ -1420,43 +1494,19 @@ function xorEncode(str) {
   )
 }
 
-// Load a cross-origin script by injecting a <script> tag (bypasses dynamic import CORS).
-function loadScriptOnce(src) {
-  if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve()
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script')
-    s.src = src
-    s.onload  = resolve
-    s.onerror = () => reject(new Error('Script load failed: ' + src))
-    document.head.appendChild(s)
-  })
-}
 
-// Configure BareMux transport and prime the UV service worker.
-// Marks iframe.dataset.priming during setup so the load handler ignores the primer page.
+// Prime the Interstellar service worker.
+// Loads the proxy host root page once — this registers the SW at that origin.
+// After priming, iframe can navigate to /a/{encoded} and the SW intercepts.
+// No BareMux setup needed client-side — Interstellar handles transport internally.
 async function initUV(iframe) {
-  const wisp = `wss://${new URL(PROXY_HOST).hostname}/wisp/`
-  try {
-    // Load BareMux via <script> tag — dynamic import() blocked by CORS cross-origin
-    await loadScriptOnce(`${PROXY_HOST}/baremux/index.js`)
-    const bm = window.BareMux ?? {}
-    if (bm.BareMuxConnection) {
-      const conn = new bm.BareMuxConnection(`${PROXY_HOST}/baremux/worker.js`)
-      await conn.setTransport('/epoxy/index.mjs', [wisp])
-    } else if (bm.SetTransport) {
-      await bm.SetTransport(`${PROXY_HOST}/baremux/worker.js`, { wisp })
-    }
-  } catch (err) {
-    console.warn('[OrbitV2] BareMux setup failed, continuing anyway:', err)
-  }
-
   iframe.dataset.priming = 'true'
   await new Promise(resolve => {
-    const fallback = setTimeout(resolve, 6000)
+    const fallback = setTimeout(resolve, 8000)
     const onLoad = () => {
       clearTimeout(fallback)
       iframe.removeEventListener('load', onLoad)
-      setTimeout(resolve, 600)
+      setTimeout(resolve, 800) // give SW install time
     }
     iframe.addEventListener('load', onLoad)
     iframe.src = PROXY_HOST
@@ -1464,7 +1514,7 @@ async function initUV(iframe) {
   delete iframe.dataset.priming
 }
 
-async function browserNavigate(input) {
+async function browserNavigate(input, { pushHistory = true, clearForward = true } = {}) {
   const val = input.trim()
   if (!val) return
   const url = looksLikeUrl(val)
@@ -1481,16 +1531,28 @@ async function browserNavigate(input) {
   if (urlInput)  urlInput.value = url
   if (newTabBtn) newTabBtn.href = url
 
-  state.browserHistory = [...state.browserHistory, state.browserUrl].slice(-40)
+  if (pushHistory) {
+    state.browserHistory = [...state.browserHistory, state.browserUrl].slice(-50)
+  }
+  if (clearForward) state.browserForward = []
   state.browserUrl = url
 
+  _syncBrowserNavBtns()
+
   if (!iframe) return
-
-  const finalSrc = `${PROXY_HOST}/service/${xorEncode(url)}`
-
+  const finalSrc = `${PROXY_HOST}/a/${xorEncode(url)}`
   if (!_uvReadyPromise) _uvReadyPromise = initUV(iframe)
   await _uvReadyPromise
   iframe.src = finalSrc
+}
+
+function _syncBrowserNavBtns() {
+  const backBtn    = document.getElementById('browser-back-btn')
+  const forwardBtn = document.getElementById('browser-forward-btn')
+  const canBack    = state.browserHistory.length > 0
+  const canForward = state.browserForward.length > 0
+  if (backBtn)    { backBtn.style.opacity    = canBack    ? '1' : '0.25'; backBtn.style.pointerEvents    = canBack    ? 'auto' : 'none' }
+  if (forwardBtn) { forwardBtn.style.opacity = canForward ? '1' : '0.25'; forwardBtn.style.pointerEvents = canForward ? 'auto' : 'none' }
 }
 
 function profileViewHTML() {
@@ -1810,7 +1872,7 @@ function bindViewEvents() {
     const urlInput = document.getElementById('browser-url-input')
     const iframe   = document.getElementById('browser-iframe')
 
-    browserNavigate(state.browserUrl)
+    browserNavigate(state.browserUrl, { pushHistory: false, clearForward: false })
 
     urlInput?.addEventListener('keydown', e => {
       if (e.key === 'Enter') browserNavigate(urlInput.value)
@@ -1824,9 +1886,21 @@ function bindViewEvents() {
     document.getElementById('browser-back-btn')?.addEventListener('click', () => {
       if (!state.browserHistory.length) return
       const prev = state.browserHistory[state.browserHistory.length - 1]
+      // Push current into forward stack before going back
+      state.browserForward = [state.browserUrl, ...state.browserForward].slice(0, 50)
       state.browserHistory = state.browserHistory.slice(0, -1)
       state.browserUrl = prev
-      browserNavigate(prev)
+      browserNavigate(prev, { pushHistory: false, clearForward: false })
+    })
+
+    document.getElementById('browser-forward-btn')?.addEventListener('click', () => {
+      if (!state.browserForward.length) return
+      const next = state.browserForward[0]
+      // Push current into back stack before going forward
+      state.browserHistory = [...state.browserHistory, state.browserUrl].slice(-50)
+      state.browserForward = state.browserForward.slice(1)
+      state.browserUrl = next
+      browserNavigate(next, { pushHistory: false, clearForward: false })
     })
 
     document.getElementById('browser-home-btn')?.addEventListener('click', () => {
@@ -1834,7 +1908,12 @@ function bindViewEvents() {
     })
 
     document.getElementById('browser-refresh-btn')?.addEventListener('click', () => {
-      if (iframe) iframe.src = iframe.src
+      if (iframe) { iframe.style.opacity = '0'; iframe.src = iframe.src }
+    })
+
+    document.getElementById('browser-fullscreen-btn')?.addEventListener('click', () => {
+      const req = iframe?.requestFullscreen ?? iframe?.webkitRequestFullscreen
+      req?.call(iframe)
     })
 
     // Hide shimmer and reveal iframe once the proxied page finishes loading.
@@ -2099,6 +2178,9 @@ initOnboarding()
 requestAnimationFrame(() => {
   const saved = localStorage.getItem('orbit_theme') ?? 'cherry'
   setTheme(saved)
+  // Show What's New if version changed
+  const storedVer = localStorage.getItem('orbit_version')
+  if (storedVer !== APP_VERSION) showWhatsNew(storedVer)
 })
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2126,6 +2208,7 @@ function icoArrowRight(s)  { return ico('<path d="m12 5 7 7-7 7"/><path d="M5 12
 function icoRefresh(s)     { return ico('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>', s) }
 function icoGlobe(s)         { return ico('<circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/>', s) }
 function icoExternalLink(s)  { return ico('<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>', s) }
+function icoMaximize(s)      { return ico('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>', s) }
 function icoDownload(s)      { return ico('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>', s) }
 
 // Returns true for bare domains ("youtube.com") and full URLs
