@@ -1496,22 +1496,28 @@ function xorEncode(str) {
 
 
 // Prime the Interstellar service worker.
-// Loads the proxy host root page once — this registers the SW at that origin.
-// After priming, iframe can navigate to /a/{encoded} and the SW intercepts.
-// No BareMux setup needed client-side — Interstellar handles transport internally.
+// Loads the proxy host root once → registers + activates the SW at that origin.
+// SW lifecycle: registered → installing → installed → activating → activated.
+// We wait 2.5s after page load to cover the full activation cycle.
+// _uvReadyPromise is reset to null on failure so the next nav retries.
 async function initUV(iframe) {
   iframe.dataset.priming = 'true'
-  await new Promise(resolve => {
-    const fallback = setTimeout(resolve, 8000)
-    const onLoad = () => {
-      clearTimeout(fallback)
-      iframe.removeEventListener('load', onLoad)
-      setTimeout(resolve, 800) // give SW install time
-    }
-    iframe.addEventListener('load', onLoad)
-    iframe.src = PROXY_HOST
-  })
-  delete iframe.dataset.priming
+  try {
+    await new Promise((resolve, reject) => {
+      const fallback = setTimeout(resolve, 10000) // hard cap 10s
+      const onLoad = () => {
+        clearTimeout(fallback)
+        iframe.removeEventListener('load', onLoad)
+        setTimeout(resolve, 2500) // wait for SW install + activate
+      }
+      iframe.addEventListener('load', onLoad)
+      iframe.src = PROXY_HOST
+    })
+  } catch {
+    _uvReadyPromise = null // allow retry on next navigate
+  } finally {
+    delete iframe.dataset.priming
+  }
 }
 
 async function browserNavigate(input, { pushHistory = true, clearForward = true } = {}) {
@@ -1918,9 +1924,21 @@ function bindViewEvents() {
 
     // Hide shimmer and reveal iframe once the proxied page finishes loading.
     // Skip load events fired during BareMux/SW priming phase.
+    // If a 404 lands (SW not active yet), reset _uvReadyPromise and retry.
     iframe?.addEventListener('load', () => {
       if (iframe.dataset.priming) return
       if (!iframe.src || iframe.src === 'about:blank') return
+
+      // Detect SW-miss 404: proxied URL loaded but SW served a raw 404 from server.
+      // We can't read cross-origin iframe content, but a failed SW load sends the
+      // iframe back to the proxy root (Interstellar shows its own 404/index page).
+      // Reset the ready promise so next navigate re-primes.
+      const isSW404 = iframe.src.includes(`${PROXY_HOST}/a/`) === false &&
+                      iframe.src !== PROXY_HOST
+      if (isSW404) {
+        _uvReadyPromise = null
+      }
+
       const loading = document.getElementById('browser-loading')
       if (loading) loading.style.opacity = '0'
       iframe.style.opacity = '1'
