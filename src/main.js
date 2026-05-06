@@ -126,6 +126,28 @@ async function _dbGet(path) {
   return snap.val()
 }
 
+// Returns a countdown target timestamp that is globally consistent.
+// Reads from RTDB first; if absent/expired, writes a fresh 100-hour target.
+// Falls back to localStorage on any Firebase error.
+async function _resolveCountdownTarget(rtdbPath, lsKey) {
+  const DURATION = 100 * 60 * 60 * 1000   // 100 hours in ms
+  try {
+    const existing = await _dbGet(rtdbPath)
+    if (existing && existing > Date.now()) return existing
+    // Not set yet (or expired) — we are the first client; write the target
+    const target = Date.now() + DURATION
+    await set(ref(_fbDb, rtdbPath), target)
+    return target
+  } catch {
+    // Firebase unavailable — use localStorage so at least this device is consistent
+    const stored = localStorage.getItem(lsKey)
+    if (stored && +stored > Date.now()) return +stored
+    const target = Date.now() + DURATION
+    localStorage.setItem(lsKey, target)
+    return target
+  }
+}
+
 async function _sha256(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
@@ -1863,30 +1885,32 @@ function bindViewEvents() {
     // Focus input on open (it's under the overlay but binding is preserved)
     document.getElementById('chat-input')?.focus()
 
-    // Maintenance overlay countdown — 100h from first visit to chat
-    if (!_chatCdTarget) {
-      _chatCdTarget = Date.now() + 100 * 60 * 60 * 1000
-    }
-    function _chatCdTick() {
-      const diff = Math.max(0, _chatCdTarget - Date.now())
-      _cdSetDigit('chat-cd-h', Math.floor(diff / 3600000))
-      _cdSetDigit('chat-cd-m', Math.floor((diff % 3600000) / 60000))
-      _cdSetDigit('chat-cd-s', Math.floor((diff % 60000) / 1000))
-    }
-    _chatCdTick()
-    _cdInterval = setInterval(_chatCdTick, 1000)
-
+    // Maintenance overlay countdown — globally consistent via RTDB
     document.getElementById('chat-cd-notify-btn')?.addEventListener('click', () => {
       setState({ view: 'profile' })
     })
     document.getElementById('chat-cd-cal-btn')?.addEventListener('click', () => {
-      const d   = new Date(_chatCdTarget)
-      const fmt = d.toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z'
+      if (!_chatCdTarget) return
+      const fmt = new Date(_chatCdTarget).toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z'
       window.open(
         `https://calendar.google.com/calendar/render?action=TEMPLATE&text=Orbit+Chat+Back+Online&dates=${fmt}/${fmt}`,
         '_blank', 'noopener,noreferrer'
       )
     })
+
+    ;(async () => {
+      _chatCdTarget = await _resolveCountdownTarget('countdown/chat', 'orbit_chat_cd')
+      const tick = () => {
+        if (!document.getElementById('chat-cd-h')) { clearInterval(_cdInterval); _cdInterval = null; return }
+        const diff = Math.max(0, _chatCdTarget - Date.now())
+        _cdSetDigit('chat-cd-h', Math.floor(diff / 3600000))
+        _cdSetDigit('chat-cd-m', Math.floor((diff % 3600000) / 60000))
+        _cdSetDigit('chat-cd-s', Math.floor((diff % 60000) / 1000))
+      }
+      tick()
+      clearInterval(_cdInterval)
+      _cdInterval = setInterval(tick, 1000)
+    })()
   }
 
   if (state.view === 'profile') {
@@ -1975,35 +1999,33 @@ function bindViewEvents() {
 
   // Countdown (browser coming-soon) view events
   if (state.view === 'browser') {
-    // Compute launch target once per session (100h from first visit to this view)
-    if (!_cdTarget) {
-      _cdTarget = Date.now() + 100 * 60 * 60 * 1000   // 100 hours from first visit
-    }
-
-    function _cdTick() {
-      const diff = Math.max(0, _cdTarget - Date.now())
-      _cdSetDigit('cd-h', Math.floor(diff / 3600000))
-      _cdSetDigit('cd-m', Math.floor((diff % 3600000) / 60000))
-      _cdSetDigit('cd-s', Math.floor((diff % 60000) / 1000))
-    }
-
-    _cdTick()
-    _cdInterval = setInterval(_cdTick, 1000)
-
-    // "Get Notified" → take user to profile to sign in / create account
+    // Buttons bound immediately (they close over _cdTarget which resolves async)
     document.getElementById('cd-notify-btn')?.addEventListener('click', () => {
       setState({ view: 'profile' })
     })
-
-    // "Add to Calendar" → Google Calendar deep-link
     document.getElementById('cd-cal-btn')?.addEventListener('click', () => {
-      const d   = new Date(_cdTarget)
-      const fmt = d.toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z'
+      if (!_cdTarget) return
+      const fmt = new Date(_cdTarget).toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z'
       window.open(
         `https://calendar.google.com/calendar/render?action=TEMPLATE&text=Orbit+Browser+Launch&dates=${fmt}/${fmt}`,
         '_blank', 'noopener,noreferrer'
       )
     })
+
+    // Resolve globally-consistent target from RTDB, then start ticker
+    ;(async () => {
+      _cdTarget = await _resolveCountdownTarget('countdown/browser', 'orbit_browser_cd')
+      const tick = () => {
+        if (!document.getElementById('cd-h')) { clearInterval(_cdInterval); _cdInterval = null; return }
+        const diff = Math.max(0, _cdTarget - Date.now())
+        _cdSetDigit('cd-h', Math.floor(diff / 3600000))
+        _cdSetDigit('cd-m', Math.floor((diff % 3600000) / 60000))
+        _cdSetDigit('cd-s', Math.floor((diff % 60000) / 1000))
+      }
+      tick()
+      clearInterval(_cdInterval)
+      _cdInterval = setInterval(tick, 1000)
+    })()
   }
 
   if (state.view === 'ai') {
