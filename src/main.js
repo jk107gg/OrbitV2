@@ -428,6 +428,10 @@ const loadedViews = new Set()
 // Resolves once BareMux is configured and the UV service worker is primed
 let _uvReadyPromise = null
 
+// Countdown view state
+let _cdInterval = null
+let _cdTarget   = null   // computed once per session, persists across nav
+
 // Icon lookup — const, must live before first render call
 const ICON_MAP = {
   youtube: brandYoutube,
@@ -1411,81 +1415,85 @@ function comingSoonContentHTML(view) {
     </div>`
 }
 
-// ── In-app browser ─────────────────────────────────────────────────────────
+// ── Countdown (Browser Coming Soon) ────────────────────────────────────────
 
-function browserViewHTML() {
-  const canBack    = state.browserHistory.length > 0
-  const canForward = state.browserForward.length > 0
+function countdownViewHTML() {
   return `
-    <div class="browser-container">
-      <div class="browser-toolbar">
-        <button id="browser-back-btn" class="browser-btn" title="Back"
-                style="opacity:${canBack ? '1' : '0.25'};pointer-events:${canBack ? 'auto' : 'none'}">
-          ${icoArrowLeft(15)}
-        </button>
-        <button id="browser-forward-btn" class="browser-btn" title="Forward"
-                style="opacity:${canForward ? '1' : '0.25'};pointer-events:${canForward ? 'auto' : 'none'}">
-          ${icoArrowRight(15)}
-        </button>
-        <button id="browser-refresh-btn" class="browser-btn" title="Reload">
-          ${icoRefresh(15)}
-        </button>
-        <button id="browser-home-btn" class="browser-btn" title="Home">
-          ${icoGlobe(15)}
-        </button>
+    <div class="countdown-wrap">
+      <div class="countdown-blob-a"></div>
+      <div class="countdown-blob-b"></div>
 
-        <input
-          id="browser-url-input"
-          type="text"
-          value="${state.browserUrl}"
-          placeholder="Search or enter a URL…"
-          class="browser-url-input"
-          spellcheck="false"
-          autocomplete="off"
-        />
+      <div class="countdown-card">
 
-        <button id="browser-go-btn" class="browser-btn" title="Go">
-          ${icoSearch(15)}
-        </button>
-        <button id="browser-fullscreen-btn" class="browser-btn" title="Fullscreen">
-          ${icoMaximize(15)}
-        </button>
-        <a id="browser-newtab-btn" href="${state.browserUrl}" target="_blank"
-           rel="noopener noreferrer" class="browser-btn" title="Open in new tab">
-          ${icoExternalLink(15)}
-        </a>
-      </div>
-
-      <div class="relative flex-1 min-h-0">
-        <!-- Shimmer skeleton shown while iframe is loading, hidden on load -->
-        <div id="browser-loading"
-             class="absolute inset-0 z-10 flex flex-col gap-3 p-5 rounded-2xl overflow-hidden
-                    bg-white/[0.03] border border-white/[0.06] pointer-events-none">
-          <div class="flex items-center gap-3">
-            <div class="skeleton-inner w-7 h-7 rounded-full flex-shrink-0"></div>
-            <div class="skeleton-inner h-2.5 w-48 rounded-full"></div>
-          </div>
-          <div class="skeleton-inner h-2.5 w-full rounded-full mt-1"></div>
-          <div class="skeleton-inner h-2.5 w-5/6 rounded-full"></div>
-          <div class="skeleton-inner h-2.5 w-4/5 rounded-full"></div>
-          <div class="skeleton-inner w-full rounded-xl" style="height:7rem"></div>
-          <div class="skeleton-inner h-2.5 w-full rounded-full"></div>
-          <div class="skeleton-inner h-2.5 w-3/4 rounded-full"></div>
-          <div class="skeleton-inner h-2.5 w-5/6 rounded-full"></div>
-          <div class="skeleton-inner w-full rounded-xl" style="height:5rem"></div>
-          <div class="skeleton-inner h-2.5 w-2/3 rounded-full"></div>
-          <div class="skeleton-inner h-2.5 w-full rounded-full"></div>
+        <!-- Badge -->
+        <div class="countdown-badge">
+          <span class="countdown-badge-icon" style="color:var(--accent-color)">${icoSparkles(13)}</span>
+          <span>Early Access Opening Soon</span>
         </div>
 
-        <iframe
-          id="browser-iframe"
-          class="absolute inset-0 w-full h-full border-none rounded-2xl bg-white z-0
-                 opacity-0 transition-opacity duration-300"
-          src="about:blank"
-        ></iframe>
+        <!-- Text -->
+        <div class="countdown-text-block">
+          <h1 class="countdown-heading">Orbit <span style="color:var(--accent-color)">Browser</span></h1>
+          <p class="countdown-sub">
+            Full proxy-powered browsing is on its way. Reserve your spot before the timer runs out.
+          </p>
+        </div>
+
+        <!-- Timer -->
+        <div class="countdown-timer">
+          <div class="countdown-unit">
+            <div class="countdown-box">
+              <span id="cd-h" class="countdown-digit">00</span>
+            </div>
+            <span class="countdown-label">Hours</span>
+          </div>
+          <span class="countdown-colon">:</span>
+          <div class="countdown-unit">
+            <div class="countdown-box">
+              <span id="cd-m" class="countdown-digit">00</span>
+            </div>
+            <span class="countdown-label">Minutes</span>
+          </div>
+          <span class="countdown-colon">:</span>
+          <div class="countdown-unit">
+            <div class="countdown-box">
+              <span id="cd-s" class="countdown-digit">00</span>
+            </div>
+            <span class="countdown-label">Seconds</span>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="countdown-actions">
+          <button class="cd-btn-primary" id="cd-notify-btn">
+            <span>Get Notified</span>
+            ${icoArrowRight(15)}
+          </button>
+          <button class="cd-btn-secondary" id="cd-cal-btn">
+            ${icoClock(15)}
+            <span>Add to Calendar</span>
+          </button>
+        </div>
+
       </div>
     </div>`
 }
+
+// Update a countdown digit element with a flip animation
+function _cdSetDigit(id, val) {
+  const el = document.getElementById(id)
+  if (!el) return
+  const padded = String(val).padStart(2, '0')
+  if (el.dataset.cdVal === padded) return
+  el.dataset.cdVal = padded
+  el.textContent = padded
+  el.classList.remove('cd-flip')
+  void el.offsetWidth   // force reflow to restart animation
+  el.classList.add('cd-flip')
+}
+
+// Legacy proxy functions kept for future restoration
+function browserViewHTML() { return countdownViewHTML() }
 
 // Ultraviolet XOR encoding — odd-indexed chars XORed with 2, result URI-encoded
 function xorEncode(str) {
@@ -1693,6 +1701,10 @@ function updateGrid() {
 function swapView() {
   if (!$viewContent) return
 
+  // Stop countdown timer when navigating away
+  clearInterval(_cdInterval)
+  _cdInterval = null
+
   // Browser view needs a different main layout (top-aligned, full height)
   const mainEl = document.querySelector('main')
   const fullHeightViews = ['browser', 'games', 'tv', 'chat', 'ai', 'music']
@@ -1873,75 +1885,39 @@ function bindViewEvents() {
     if (app) setState({ activeApp: app })
   })
 
-  // Browser view events
+  // Countdown (browser coming-soon) view events
   if (state.view === 'browser') {
-    const urlInput = document.getElementById('browser-url-input')
-    const iframe   = document.getElementById('browser-iframe')
+    // Compute launch target once per session (3 days from first visit to this view)
+    if (!_cdTarget) {
+      const t = new Date()
+      t.setDate(t.getDate() + 3)
+      t.setHours(0, 0, 0, 0)
+      _cdTarget = t.getTime()
+    }
 
-    browserNavigate(state.browserUrl, { pushHistory: false, clearForward: false })
+    function _cdTick() {
+      const diff = Math.max(0, _cdTarget - Date.now())
+      _cdSetDigit('cd-h', Math.floor(diff / 3600000))
+      _cdSetDigit('cd-m', Math.floor((diff % 3600000) / 60000))
+      _cdSetDigit('cd-s', Math.floor((diff % 60000) / 1000))
+    }
 
-    urlInput?.addEventListener('keydown', e => {
-      if (e.key === 'Enter') browserNavigate(urlInput.value)
-    })
-    urlInput?.addEventListener('focus', () => urlInput.select())
+    _cdTick()
+    _cdInterval = setInterval(_cdTick, 1000)
 
-    document.getElementById('browser-go-btn')?.addEventListener('click', () => {
-      browserNavigate(urlInput?.value ?? '')
-    })
-
-    document.getElementById('browser-back-btn')?.addEventListener('click', () => {
-      if (!state.browserHistory.length) return
-      const prev = state.browserHistory[state.browserHistory.length - 1]
-      // Push current into forward stack before going back
-      state.browserForward = [state.browserUrl, ...state.browserForward].slice(0, 50)
-      state.browserHistory = state.browserHistory.slice(0, -1)
-      state.browserUrl = prev
-      browserNavigate(prev, { pushHistory: false, clearForward: false })
-    })
-
-    document.getElementById('browser-forward-btn')?.addEventListener('click', () => {
-      if (!state.browserForward.length) return
-      const next = state.browserForward[0]
-      // Push current into back stack before going forward
-      state.browserHistory = [...state.browserHistory, state.browserUrl].slice(-50)
-      state.browserForward = state.browserForward.slice(1)
-      state.browserUrl = next
-      browserNavigate(next, { pushHistory: false, clearForward: false })
+    // "Get Notified" → take user to profile to sign in / create account
+    document.getElementById('cd-notify-btn')?.addEventListener('click', () => {
+      setState({ view: 'profile' })
     })
 
-    document.getElementById('browser-home-btn')?.addEventListener('click', () => {
-      browserNavigate(BROWSER_HOME)
-    })
-
-    document.getElementById('browser-refresh-btn')?.addEventListener('click', () => {
-      if (iframe) { iframe.style.opacity = '0'; iframe.src = iframe.src }
-    })
-
-    document.getElementById('browser-fullscreen-btn')?.addEventListener('click', () => {
-      const req = iframe?.requestFullscreen ?? iframe?.webkitRequestFullscreen
-      req?.call(iframe)
-    })
-
-    // Hide shimmer and reveal iframe once the proxied page finishes loading.
-    // Skip load events fired during BareMux/SW priming phase.
-    // If a 404 lands (SW not active yet), reset _uvReadyPromise and retry.
-    iframe?.addEventListener('load', () => {
-      if (iframe.dataset.priming) return
-      if (!iframe.src || iframe.src === 'about:blank') return
-
-      // Detect SW-miss 404: proxied URL loaded but SW served a raw 404 from server.
-      // We can't read cross-origin iframe content, but a failed SW load sends the
-      // iframe back to the proxy root (Interstellar shows its own 404/index page).
-      // Reset the ready promise so next navigate re-primes.
-      const isSW404 = iframe.src.includes(`${PROXY_HOST}/a/`) === false &&
-                      iframe.src !== PROXY_HOST
-      if (isSW404) {
-        _uvReadyPromise = null
-      }
-
-      const loading = document.getElementById('browser-loading')
-      if (loading) loading.style.opacity = '0'
-      iframe.style.opacity = '1'
+    // "Add to Calendar" → Google Calendar deep-link
+    document.getElementById('cd-cal-btn')?.addEventListener('click', () => {
+      const d   = new Date(_cdTarget)
+      const fmt = d.toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z'
+      window.open(
+        `https://calendar.google.com/calendar/render?action=TEMPLATE&text=Orbit+Browser+Launch&dates=${fmt}/${fmt}`,
+        '_blank', 'noopener,noreferrer'
+      )
     })
   }
 
@@ -2228,6 +2204,7 @@ function icoGlobe(s)         { return ico('<circle cx="12" cy="12" r="10"/><path
 function icoExternalLink(s)  { return ico('<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>', s) }
 function icoMaximize(s)      { return ico('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>', s) }
 function icoDownload(s)      { return ico('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>', s) }
+function icoClock(s)         { return ico('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>', s) }
 
 // Returns true for bare domains ("youtube.com") and full URLs
 function looksLikeUrl(str) {
