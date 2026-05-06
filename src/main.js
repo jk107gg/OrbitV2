@@ -429,8 +429,9 @@ const loadedViews = new Set()
 let _uvReadyPromise = null
 
 // Countdown view state
-let _cdInterval = null
-let _cdTarget   = null   // computed once per session, persists across nav
+let _cdInterval    = null
+let _cdTarget      = null   // browser countdown — 100h from first visit
+let _chatCdTarget  = null   // chat countdown   — 100h from first visit
 
 // Icon lookup — const, must live before first render call
 const ICON_MAP = {
@@ -1255,63 +1256,125 @@ function tvViewHTML() {
 function chatViewHTML() {
   const tabOn  = 'px-4 py-1.5 rounded-full text-xs border border-white/35 text-white bg-white/[0.09] transition-colors cursor-pointer'
   const tabOff = 'px-4 py-1.5 rounded-full text-xs border border-white/10 text-white/40 bg-white/[0.03] hover:bg-white/[0.06] transition-colors cursor-pointer'
-  const nick   = _currentNick()
-  const isLoggedIn = !!_authUser
+  const nick        = _currentNick()
+  const isLoggedIn  = !!_authUser
   const headerTitle = _chatMode === 'dm' && _chatDmPartner ? `DM · ${_escHtml(_chatDmPartner)}` : 'Global Chat'
-  const inputPlaceholder = _chatMode === 'dm' && !_chatDmPartner ? 'Enter username to DM…' : 'Message…'
+  const inputPH     = _chatMode === 'dm' && !_chatDmPartner ? 'Enter username to DM…' : 'Message…'
   return `
-    <div class="flex flex-col w-full" style="height:calc(100dvh - 7.5rem)">
+    <div style="position:relative;width:100%;height:calc(100dvh - 7.5rem)">
 
-      <!-- Header -->
-      <div class="flex items-center justify-between px-4 py-3 mb-3 flex-shrink-0
-                  bg-white/[0.03] border border-white/[0.08] rounded-2xl">
-        <div class="flex items-center gap-2.5">
-          <span class="text-white/80 font-semibold text-sm tracking-wide">${headerTitle}</span>
-          <span class="text-white/20 text-xs">·</span>
-          <span id="chat-nick-display" class="text-white/30 text-xs font-mono">${_escHtml(nick)}</span>
-          ${isLoggedIn ? '' : '<span class="text-white/20 text-[10px] font-mono">(guest)</span>'}
+      <!-- ── Real chat UI (preserved under overlay) ── -->
+      <div class="flex flex-col w-full" style="height:100%">
+
+        <!-- Header -->
+        <div class="flex items-center justify-between px-4 py-3 mb-3 flex-shrink-0
+                    bg-white/[0.03] border border-white/[0.08] rounded-2xl">
+          <div class="flex items-center gap-2.5">
+            <span class="text-white/80 font-semibold text-sm tracking-wide">${headerTitle}</span>
+            <span class="text-white/20 text-xs">·</span>
+            <span id="chat-nick-display" class="text-white/30 text-xs font-mono">${_escHtml(nick)}</span>
+            ${isLoggedIn ? '' : '<span class="text-white/20 text-[10px] font-mono">(guest)</span>'}
+          </div>
+          <div class="flex items-center gap-2">
+            ${!isLoggedIn ? `<button id="chat-login-btn" class="text-[10px] px-3 py-1 rounded-full border border-white/15 text-white/40 hover:text-white/80 hover:border-white/30 transition-colors cursor-pointer">Sign in</button>` : ''}
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0"
+                  style="box-shadow:0 0 6px rgba(52,211,153,0.7)"></span>
+            <span id="online-count" class="text-white/30 text-xs">0</span>
+            <span class="text-white/20 text-xs">online</span>
+          </div>
         </div>
-        <div class="flex items-center gap-2">
-          ${!isLoggedIn ? `<button id="chat-login-btn" class="text-[10px] px-3 py-1 rounded-full border border-white/15 text-white/40 hover:text-white/80 hover:border-white/30 transition-colors cursor-pointer">Sign in</button>` : ''}
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0"
-                style="box-shadow:0 0 6px rgba(52,211,153,0.7)"></span>
-          <span id="online-count" class="text-white/30 text-xs">0</span>
-          <span class="text-white/20 text-xs">online</span>
+
+        <!-- Mode tabs -->
+        <div class="flex items-center gap-2 mb-3 flex-shrink-0">
+          <button id="chat-tab-global" class="${_chatMode === 'global' ? tabOn : tabOff}">Global</button>
+          <button id="chat-tab-dm"     class="${_chatMode === 'dm'     ? tabOn : tabOff}">DM</button>
+          <input id="chat-dm-input" type="text" placeholder="Username to DM…"
+                 value="${_escHtml(_chatDmPartner)}"
+                 autocomplete="off" spellcheck="false"
+                 class="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-full
+                        px-3 py-1.5 text-xs text-white/70 outline-none placeholder-white/20
+                        transition-opacity"
+                 style="opacity:${_chatMode === 'dm' ? '1' : '0'};pointer-events:${_chatMode === 'dm' ? 'auto' : 'none'}">
+          <div id="chat-dm-status" class="text-[10px] text-red-400 flex-shrink-0" style="display:none"></div>
+        </div>
+
+        <!-- Messages -->
+        <div id="chat-messages"
+             class="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2 pb-1 px-1">
+        </div>
+
+        <!-- Input -->
+        <form id="chat-form"
+              class="flex items-center gap-2 mt-3 flex-shrink-0
+                     bg-white/[0.04] border border-white/[0.08] rounded-full px-4 py-2.5">
+          <input id="chat-input" type="text" placeholder="${inputPH}"
+                 autocomplete="off" maxlength="500"
+                 class="flex-1 bg-transparent outline-none text-white/80 text-sm
+                        placeholder-white/20 caret-white/40 min-w-0">
+          <button type="submit"
+                  class="text-white/30 hover:text-white/80 transition-colors flex-shrink-0">
+            ${icoArrowRight(15)}
+          </button>
+        </form>
+
+      </div>
+
+      <!-- ── Maintenance countdown overlay (sits on top) ── -->
+      <div class="chat-maint-overlay">
+        <div class="countdown-blob-a"></div>
+        <div class="countdown-blob-b"></div>
+
+        <div class="countdown-card">
+
+          <div class="countdown-badge">
+            <span class="countdown-badge-icon" style="color:var(--accent-color)">${icoMsgSquare(13)}</span>
+            <span>Under Maintenance</span>
+          </div>
+
+          <div class="countdown-text-block">
+            <h1 class="countdown-heading">Orbit <span style="color:var(--accent-color)">Chat</span></h1>
+            <p class="countdown-sub">
+              Chat is temporarily offline while we roll out improvements.
+              Back online when the timer hits zero.
+            </p>
+          </div>
+
+          <div class="countdown-timer">
+            <div class="countdown-unit">
+              <div class="countdown-box">
+                <span id="chat-cd-h" class="countdown-digit">00</span>
+              </div>
+              <span class="countdown-label">Hours</span>
+            </div>
+            <span class="countdown-colon">:</span>
+            <div class="countdown-unit">
+              <div class="countdown-box">
+                <span id="chat-cd-m" class="countdown-digit">00</span>
+              </div>
+              <span class="countdown-label">Minutes</span>
+            </div>
+            <span class="countdown-colon">:</span>
+            <div class="countdown-unit">
+              <div class="countdown-box">
+                <span id="chat-cd-s" class="countdown-digit">00</span>
+              </div>
+              <span class="countdown-label">Seconds</span>
+            </div>
+          </div>
+
+          <div class="countdown-actions">
+            <button class="cd-btn-primary" id="chat-cd-notify-btn">
+              <span>Get Notified</span>
+              ${icoArrowRight(15)}
+            </button>
+            <button class="cd-btn-secondary" id="chat-cd-cal-btn">
+              ${icoClock(15)}
+              <span>Add to Calendar</span>
+            </button>
+          </div>
+
         </div>
       </div>
-
-      <!-- Mode tabs -->
-      <div class="flex items-center gap-2 mb-3 flex-shrink-0">
-        <button id="chat-tab-global" class="${_chatMode === 'global' ? tabOn : tabOff}">Global</button>
-        <button id="chat-tab-dm"     class="${_chatMode === 'dm'     ? tabOn : tabOff}">DM</button>
-        <input id="chat-dm-input" type="text" placeholder="Username to DM…"
-               value="${_escHtml(_chatDmPartner)}"
-               autocomplete="off" spellcheck="false"
-               class="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-full
-                      px-3 py-1.5 text-xs text-white/70 outline-none placeholder-white/20
-                      transition-opacity"
-               style="opacity:${_chatMode === 'dm' ? '1' : '0'};pointer-events:${_chatMode === 'dm' ? 'auto' : 'none'}">
-        <div id="chat-dm-status" class="text-[10px] text-red-400 flex-shrink-0" style="display:none"></div>
-      </div>
-
-      <!-- Messages -->
-      <div id="chat-messages"
-           class="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2 pb-1 px-1">
-      </div>
-
-      <!-- Input -->
-      <form id="chat-form"
-            class="flex items-center gap-2 mt-3 flex-shrink-0
-                   bg-white/[0.04] border border-white/[0.08] rounded-full px-4 py-2.5">
-        <input id="chat-input" type="text" placeholder="${inputPlaceholder}"
-               autocomplete="off" maxlength="500"
-               class="flex-1 bg-transparent outline-none text-white/80 text-sm
-                      placeholder-white/20 caret-white/40 min-w-0">
-        <button type="submit"
-                class="text-white/30 hover:text-white/80 transition-colors flex-shrink-0">
-          ${icoArrowRight(15)}
-        </button>
-      </form>
 
     </div>`
 }
@@ -1797,8 +1860,33 @@ function bindViewEvents() {
       setState({ view: 'profile' })
     })
 
-    // Focus input on open
+    // Focus input on open (it's under the overlay but binding is preserved)
     document.getElementById('chat-input')?.focus()
+
+    // Maintenance overlay countdown — 100h from first visit to chat
+    if (!_chatCdTarget) {
+      _chatCdTarget = Date.now() + 100 * 60 * 60 * 1000
+    }
+    function _chatCdTick() {
+      const diff = Math.max(0, _chatCdTarget - Date.now())
+      _cdSetDigit('chat-cd-h', Math.floor(diff / 3600000))
+      _cdSetDigit('chat-cd-m', Math.floor((diff % 3600000) / 60000))
+      _cdSetDigit('chat-cd-s', Math.floor((diff % 60000) / 1000))
+    }
+    _chatCdTick()
+    _cdInterval = setInterval(_chatCdTick, 1000)
+
+    document.getElementById('chat-cd-notify-btn')?.addEventListener('click', () => {
+      setState({ view: 'profile' })
+    })
+    document.getElementById('chat-cd-cal-btn')?.addEventListener('click', () => {
+      const d   = new Date(_chatCdTarget)
+      const fmt = d.toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z'
+      window.open(
+        `https://calendar.google.com/calendar/render?action=TEMPLATE&text=Orbit+Chat+Back+Online&dates=${fmt}/${fmt}`,
+        '_blank', 'noopener,noreferrer'
+      )
+    })
   }
 
   if (state.view === 'profile') {
@@ -1887,12 +1975,9 @@ function bindViewEvents() {
 
   // Countdown (browser coming-soon) view events
   if (state.view === 'browser') {
-    // Compute launch target once per session (3 days from first visit to this view)
+    // Compute launch target once per session (100h from first visit to this view)
     if (!_cdTarget) {
-      const t = new Date()
-      t.setDate(t.getDate() + 3)
-      t.setHours(0, 0, 0, 0)
-      _cdTarget = t.getTime()
+      _cdTarget = Date.now() + 100 * 60 * 60 * 1000   // 100 hours from first visit
     }
 
     function _cdTick() {

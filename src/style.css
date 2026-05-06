@@ -581,6 +581,21 @@ main.browser-mode #view-content {
 .cd-btn-secondary:hover  { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); transform: scale(1.02); }
 .cd-btn-secondary:active { transform: scale(0.97); }
 
+/* Chat maintenance overlay — absolute, sits on top of real chat UI */
+.chat-maint-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 1rem;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    SETTINGS — theme cards
 ═══════════════════════════════════════════════════════════════════════════ */
