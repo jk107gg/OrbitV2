@@ -572,6 +572,36 @@ let state = {
   browserUrl:      BROWSER_HOME,
   browserHistory:  [],
   browserForward:  [],
+  // Performance
+  perfNoStars:      false,
+  perfReduceMotion: false,
+  perfNoBlur:       false,
+  perfNoGlow:       false,
+}
+
+// Load saved perf prefs before first render
+;(function _loadPerfSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem('orbit_perf') || '{}')
+    if (s.perfNoStars)      state.perfNoStars      = true
+    if (s.perfReduceMotion) state.perfReduceMotion = true
+    if (s.perfNoBlur)       state.perfNoBlur       = true
+    if (s.perfNoGlow)       state.perfNoGlow       = true
+  } catch {}
+})()
+
+function _applyPerfClasses() {
+  const r = document.documentElement
+  r.classList.toggle('perf-no-stars',       state.perfNoStars)
+  r.classList.toggle('perf-reduce-motion',  state.perfReduceMotion)
+  r.classList.toggle('perf-no-blur',        state.perfNoBlur)
+  r.classList.toggle('perf-no-glow',        state.perfNoGlow)
+  localStorage.setItem('orbit_perf', JSON.stringify({
+    perfNoStars:      state.perfNoStars,
+    perfReduceMotion: state.perfReduceMotion,
+    perfNoBlur:       state.perfNoBlur,
+    perfNoGlow:       state.perfNoGlow,
+  }))
 }
 
 function setState(patch) {
@@ -592,6 +622,13 @@ function setState(patch) {
   }
 
   if ('settingsSection' in patch) {
+    const body = document.getElementById('settings-body')
+    if (body) body.innerHTML = settingsBodyHTML()
+    return
+  }
+
+  if ('perfNoStars' in patch || 'perfReduceMotion' in patch || 'perfNoBlur' in patch || 'perfNoGlow' in patch) {
+    _applyPerfClasses()
     const body = document.getElementById('settings-body')
     if (body) body.innerHTML = settingsBodyHTML()
     return
@@ -671,8 +708,10 @@ function applyAccent(rgb) {
 function regenerateStars(rgb) {
   const s1 = document.getElementById('stars1')
   const s2 = document.getElementById('stars2')
-  if (s1) s1.style.boxShadow = starShadows(800, 0.55, rgb)
-  if (s2) s2.style.boxShadow = starShadows(250, 0.85, rgb)
+  const s3 = document.getElementById('stars3')
+  if (s1) s1.style.boxShadow = starShadows(1200, 0.75, rgb)
+  if (s2) s2.style.boxShadow = starShadows(400,  0.95, rgb)
+  if (s3) s3.style.boxShadow = starShadows(80,   1.0,  rgb)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1264,7 +1303,8 @@ function homeViewHTML() {
 }
 
 function settingsBodyHTML() {
-  const isAppearance = state.settingsSection === 'appearance'
+  const isAppearance  = state.settingsSection === 'appearance'
+  const isPerformance = state.settingsSection === 'performance'
 
   const appearanceExpanded = isAppearance ? `
     <div class="px-5 pb-5 flex flex-col gap-3">
@@ -1283,11 +1323,34 @@ function settingsBodyHTML() {
       </div>
     </div>` : ''
 
+  const perfToggleHTML = (key, title, desc) => `
+    <div class="flex items-center justify-between px-4 py-3 rounded-xl
+                bg-white/[0.03] border border-white/[0.06]">
+      <div>
+        <p class="text-white/70 text-sm font-medium">${title}</p>
+        <p class="text-white/25 text-xs mt-0.5">${desc}</p>
+      </div>
+      <button data-perf-toggle="${key}" type="button"
+              class="perf-tog${state[key] ? ' perf-tog-on' : ''}">
+        <span class="perf-tog-thumb"></span>
+      </button>
+    </div>`
+
+  const performanceExpanded = isPerformance ? `
+    <div class="px-5 pb-5 flex flex-col gap-2">
+      ${perfToggleHTML('perfNoStars',      'Disable Stars',         'Stops starfield — biggest GPU saving')}
+      ${perfToggleHTML('perfReduceMotion', 'Reduce Motion',         'Disables all transitions & animations')}
+      ${perfToggleHTML('perfNoBlur',       'Disable Blur Effects',  'Removes backdrop-filter (GPU heavy)')}
+      ${perfToggleHTML('perfNoGlow',       'Disable Glow',          'Removes box-shadow glow effects')}
+    </div>` : ''
+
   return `
-    ${settingsRowHTML('Appearance', 'Theme & colors', 'appearance', isAppearance)}
+    ${settingsRowHTML('Appearance',  'Theme & colors',               'appearance',  isAppearance)}
     ${appearanceExpanded}
-    ${settingsRowHTML('Privacy',    'History, cookies, tracking')}
-    ${settingsRowHTML('About',      'Version 2.0.0 — OrbitV2')}`
+    ${settingsRowHTML('Performance', 'Stars, blur, motion, glow',    'performance', isPerformance)}
+    ${performanceExpanded}
+    ${settingsRowHTML('Privacy',     'History, cookies, tracking')}
+    ${settingsRowHTML('About',       'Version 2.0.0 — OrbitV2')}`
 }
 
 function settingsRowHTML(title, desc, section = null, isOpen = false) {
@@ -2221,6 +2284,11 @@ function bindViewEvents() {
     if (swatch) {
       setTheme(swatch.dataset.themeName)
     }
+    const tog = e.target.closest('[data-perf-toggle]')
+    if (tog) {
+      const key = tog.dataset.perfToggle
+      setState({ [key]: !state[key] })
+    }
   })
 }
 
@@ -2373,7 +2441,7 @@ function starShadows(count, alpha, rgb = '255, 255, 255') {
   for (let i = 0; i < count; i++) {
     const x = Math.floor(Math.random() * 2000)
     const y = Math.floor(Math.random() * 2000)
-    const a = (alpha * (0.4 + Math.random() * 0.6)).toFixed(2)
+    const a = (alpha * (0.55 + Math.random() * 0.45)).toFixed(2)
     out.push(`${x}px ${y}px rgba(${rgb},${a})`)
   }
   return out.join(',')
@@ -2388,6 +2456,7 @@ document.querySelector('#app').innerHTML = `
     <div class="stars-wrap" aria-hidden="true">
       <div class="stars-layer" id="stars1"></div>
       <div class="stars-layer" id="stars2"></div>
+      <div class="stars-layer" id="stars3"></div>
     </div>
 
     <main class="relative z-10 flex flex-col items-center justify-center
@@ -2409,10 +2478,11 @@ bindViewEvents()
 bindDockEvents()
 initOnboarding()
 
-// On load: restore saved theme (sets CSS vars + generates colored stars)
+// On load: restore saved theme + apply perf settings
 requestAnimationFrame(() => {
   const saved = localStorage.getItem('orbit_theme') ?? 'cherry'
   setTheme(saved)
+  _applyPerfClasses()
   // Show What's New if version changed
   const storedVer = localStorage.getItem('orbit_version')
   if (storedVer !== APP_VERSION) showWhatsNew(storedVer)
