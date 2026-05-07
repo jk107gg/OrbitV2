@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
+import react from '@vitejs/plugin-react'
+import path from 'path'
 
 const STRIP_HEADERS = new Set([
   'x-frame-options',
@@ -31,7 +33,13 @@ function readBody(req) {
 
 export default defineConfig({
   base: '/OrbitV2/',
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
   plugins: [
+    react(),
     tailwindcss(),
     {
       name: 'web-proxy',

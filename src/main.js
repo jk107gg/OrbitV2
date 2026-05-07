@@ -115,7 +115,28 @@ onValue(ref(_fbDb, '.info/connected'), snap => { if (snap.val()) _setPresence() 
 onValue(ref(_fbDb, 'presence'), snap => {
   const el = document.getElementById('online-count')
   if (el) el.textContent = snap.numChildren()
+  _updatePresenceSidebar(snap)
 })
+
+function _updatePresenceSidebar(snap) {
+  const box = document.getElementById('chat-sidebar-users')
+  if (!box) return
+  box.innerHTML = ''
+  snap.forEach(child => {
+    const data     = child.val()
+    const username = data.username || child.key
+    const isSelf   = username === _currentNick()
+    const div      = document.createElement('div')
+    div.className   = 'chat-sidebar-user' + (isSelf ? ' self' : '')
+    div.dataset.username = username
+    div.innerHTML = `
+      <span class="chat-sb-dot"></span>
+      <span class="chat-sb-name">${_escHtml(username)}</span>
+      ${isSelf ? '<span class="chat-sb-you">you</span>' : ''}
+    `
+    box.appendChild(div)
+  })
+}
 
 // ── Auth helpers (RTDB + Web Crypto — no Firebase Auth / no email) ─────────
 
@@ -222,11 +243,12 @@ async function _dmKey(otherUsername) {
 
 // ── Chat state ────────────────────────────────────────────────────────────
 
-let _chatMode      = 'global'
-let _chatRoom      = ''
-let _chatDmPartner = ''   // display name of DM partner
-let _chatActiveRef = null
-let _chatUnsub     = null
+let _chatMode       = 'global'
+let _chatRoom       = ''
+let _chatDmPartner  = ''   // display name of DM partner
+let _chatActiveRef  = null
+let _chatUnsub      = null
+let _chatLastSender = ''   // for message grouping
 
 function _chatMessagesRef() {
   return _chatMode === 'dm'
@@ -247,19 +269,22 @@ function _renderChatMsg(snap) {
   const box = document.getElementById('chat-messages')
   if (!box) return
   const d = snap.val()
-  if (!d?.text) return
-  const sender  = d.username || d.nickname || 'Unknown'
-  const isSelf  = sender === _currentNick()
-  const wrap    = document.createElement('div')
-  wrap.className = 'flex flex-col gap-0.5 max-w-[80%] ' +
-    (isSelf ? 'self-end items-end ml-auto' : 'self-start items-start')
+  if (!d?.text && !d?.image) return
+  const sender    = d.username || d.nickname || 'Unknown'
+  const isSelf    = sender === _currentNick()
+  const isGrouped = sender === _chatLastSender
+  _chatLastSender = sender
+
+  const bubbleContent = d.type === 'image'
+    ? `<img src="${d.image}" class="chat-img-bubble" alt="image" loading="lazy">`
+    : _escHtml(d.text)
+
+  const wrap = document.createElement('div')
+  wrap.className = `chat-msg-wrap ${isSelf ? 'chat-msg-self' : 'chat-msg-other'} ${isGrouped ? 'chat-msg-grouped' : ''}`
   wrap.innerHTML = `
-    <span class="text-[10px] text-white/25 px-1">${_escHtml(sender)}</span>
-    <div class="px-3 py-2 rounded-2xl text-sm break-words leading-relaxed
-      ${isSelf
-        ? 'bg-white/[0.12] text-white rounded-br-sm'
-        : 'bg-white/[0.05] text-white/75 rounded-bl-sm'}">
-      ${_escHtml(d.text)}
+    ${!isGrouped ? `<span class="chat-msg-sender">${_escHtml(sender)}</span>` : ''}
+    <div class="chat-bubble ${isSelf ? 'chat-bubble-self' : 'chat-bubble-other'} ${d.type === 'image' ? 'chat-bubble-img' : ''}">
+      ${bubbleContent}
     </div>`
   box.appendChild(wrap)
   box.scrollTop = box.scrollHeight
@@ -275,31 +300,100 @@ function _teardownChatMessages() {
 
 function _loadChatMessages() {
   _teardownChatMessages()
+  _chatLastSender = ''
   const box = document.getElementById('chat-messages')
   if (box) box.innerHTML = ''
   _chatActiveRef = _chatMessagesRef()
   _chatUnsub     = onChildAdded(_chatActiveRef, _renderChatMsg)
 }
 
-function _applyChatTabStyles(mode) {
-  const on  = 'px-4 py-1.5 rounded-full text-xs border border-white/35 text-white bg-white/[0.09] transition-colors cursor-pointer'
-  const off = 'px-4 py-1.5 rounded-full text-xs border border-white/10 text-white/40 bg-white/[0.03] hover:bg-white/[0.06] transition-colors cursor-pointer'
-  const gTab = document.getElementById('chat-tab-global')
-  const dTab = document.getElementById('chat-tab-dm')
-  const dIn  = document.getElementById('chat-dm-input')
-  if (gTab)  gTab.className = mode === 'global' ? on : off
-  if (dTab)  dTab.className = mode === 'dm'     ? on : off
-  if (dIn) {
-    dIn.style.opacity       = mode === 'dm' ? '1' : '0'
-    dIn.style.pointerEvents = mode === 'dm' ? ''  : 'none'
+function _switchChat(mode, roomCode = '', partner = '') {
+  _chatMode      = mode
+  _chatRoom      = roomCode
+  _chatDmPartner = partner
+  // Re-render the whole view so the DM search / conversation panels swap correctly
+  if (state.view === 'chat') swapView()
+}
+
+// ── Chat rate limiter (10 msgs / 60 s, per device) ────────────────────────
+const _RATE_KEY     = 'orbit_chat_rate'
+const _RATE_MAX     = 10
+const _RATE_WINDOW  = 60_000   // ms
+
+function _chatRateCheck() {
+  const now    = Date.now()
+  const stamps = JSON.parse(localStorage.getItem(_RATE_KEY) || '[]').filter(t => now - t < _RATE_WINDOW)
+  if (stamps.length >= _RATE_MAX) return false
+  stamps.push(now)
+  localStorage.setItem(_RATE_KEY, JSON.stringify(stamps))
+  return true
+}
+
+// ── Image upload — 3 / calendar day ───────────────────────────────────────
+const _IMG_KEY     = 'orbit_chat_img'
+const _IMG_DAY_MAX = 3
+
+function _imgUsedToday() {
+  try {
+    const s = JSON.parse(localStorage.getItem(_IMG_KEY) || 'null')
+    return (s?.date === new Date().toDateString()) ? (s.count ?? 0) : 0
+  } catch { return 0 }
+}
+function _imgIncToday() {
+  const date  = new Date().toDateString()
+  const count = _imgUsedToday() + 1
+  localStorage.setItem(_IMG_KEY, JSON.stringify({ date, count }))
+}
+
+async function _compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const MAX = 640
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onerror = reject
+    img.onload  = () => {
+      let w = img.width, h = img.height
+      if (w > h && w > MAX) { h = Math.round(h * MAX / w); w = MAX }
+      else if (h > MAX)     { w = Math.round(w * MAX / h); h = MAX }
+      const canvas = document.createElement('canvas')
+      canvas.width = w; canvas.height = h
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h)
+      URL.revokeObjectURL(url)
+      resolve(canvas.toDataURL('image/jpeg', 0.72))
+    }
+    img.src = url
+  })
+}
+
+async function _sendChatImage(file) {
+  if (_imgUsedToday() >= _IMG_DAY_MAX) {
+    _chatShowNotice(`Image limit reached (${_IMG_DAY_MAX}/day)`)
+    return
+  }
+  if (!file.type.startsWith('image/')) { _chatShowNotice('Not an image'); return }
+  if (file.size > 8 * 1024 * 1024)    { _chatShowNotice('Image too large (max 8 MB)'); return }
+  _chatShowNotice('Uploading…')
+  try {
+    const dataUrl = await _compressImage(file)
+    if (!_chatRateCheck()) { _chatShowNotice('Slow down — too many messages'); return }
+    await push(_chatMessagesRef(), {
+      username: _currentNick(), uid: _authUser?.uid ?? null,
+      type: 'image', image: dataUrl, timestamp: serverTimestamp()
+    })
+    _imgIncToday()
+    _chatShowNotice(`Images today: ${_imgUsedToday()}/${_IMG_DAY_MAX}`)
+  } catch (e) {
+    _chatShowNotice('Upload failed')
   }
 }
 
-function _switchChat(mode, roomCode = '') {
-  _chatMode = mode
-  _chatRoom = roomCode
-  _applyChatTabStyles(mode)
-  _loadChatMessages()
+function _chatShowNotice(msg) {
+  const el = document.getElementById('chat-notice')
+  if (!el) return
+  el.textContent = msg
+  el.style.opacity = '1'
+  clearTimeout(el._t)
+  el._t = setTimeout(() => { el.style.opacity = '0' }, 2500)
 }
 
 function _sendChatMessage() {
@@ -308,6 +402,7 @@ function _sendChatMessage() {
   const text = input.value.trim()
   if (!text) return
   if (_chatMode === 'dm' && !_chatRoom.trim()) return
+  if (!_chatRateCheck()) { _chatShowNotice('Slow down — too many messages'); return }
   push(_chatMessagesRef(), { username: _currentNick(), uid: _authUser?.uid ?? null, text, timestamp: serverTimestamp() })
   input.value = ''
   input.focus()
@@ -600,30 +695,28 @@ function showAppOverlay(app) {
         ${icoArrowLeft(14)} Home
       </button>
       <span class="app-frame-urlbar" title="${app.url}">${app.url}</span>
-      <div class="flex items-center gap-1">
-        <a href="${app.url}" target="_blank" rel="noopener noreferrer"
-           class="app-frame-close" title="Open in new tab">
-          ${icoExternalLink(14)}
-        </a>
-        <button id="reload-app-btn" class="app-frame-close" title="Reload">
-          ${icoRefresh(14)}
-        </button>
-      </div>
+      <a href="${app.url}" target="_blank" rel="noopener noreferrer"
+         class="app-frame-close" title="Open in new tab">
+        ${icoExternalLink(14)}
+      </a>
     </div>
-    <iframe
-      id="app-iframe"
-      class="app-iframe"
-      src="${proxyUrl(app.url)}"
-      sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      loading="lazy"
-    ></iframe>`
+    <div class="ghost404-wrap">
+      <div class="ghost404-numbers">
+        <span class="ghost404-num ghost404-num-l">4</span>
+        <img src="https://xubohuah.github.io/xubohua.top/Group.png"
+             alt="Ghost" class="ghost404-ghost" draggable="false">
+        <span class="ghost404-num ghost404-num-r">4</span>
+      </div>
+      <h1 class="ghost404-title">Boo! Page missing!</h1>
+      <p class="ghost404-sub">Whoops! This page must be a ghost — it&apos;s not here!</p>
+      <button id="ghost404-shelter" class="ghost404-btn">Find shelter</button>
+      <a href="${app.url}" target="_blank" rel="noopener noreferrer"
+         class="ghost404-link">Open ${_escHtml(app.name)} directly ↗</a>
+    </div>`
 
   document.getElementById('orbit-root').appendChild(el)
   document.getElementById('close-app-btn').addEventListener('click', closeApp)
-  document.getElementById('reload-app-btn').addEventListener('click', () => {
-    const iframe = document.getElementById('app-iframe')
-    if (iframe) iframe.src = iframe.src
-  })
+  document.getElementById('ghost404-shelter')?.addEventListener('click', closeApp)
 }
 
 function removeAppOverlay() {
@@ -790,8 +883,9 @@ function removeWatchOverlay() {
 
 // ── srcdoc builders ───────────────────────────────────────────────────────
 
-function buildGamesSrcdoc() {
-  const css = `*{box-sizing:border-box;margin:0;padding:0}html{width:100%;height:100%}body{width:100%;min-height:100%;background:transparent;color:#e0e0e0;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;overflow-y:auto}select,input{font:inherit;color:#e0e0e0;outline:none}.controls{display:flex;gap:8px;padding:12px;flex-shrink:0;flex-wrap:wrap;align-items:center;position:sticky;top:0;z-index:10;background:rgba(0,0,0,.6);backdrop-filter:blur(12px)}.ctrl{padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);font-size:12px;cursor:pointer}#search{flex:1;min-width:140px}#search::placeholder{color:rgba(255,255,255,.25)}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;padding:12px}.card{border-radius:12px;border:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03);cursor:pointer;transition:.15s;overflow:hidden;display:flex;flex-direction:column;position:relative}.card:hover{border-color:rgba(255,255,255,.22);background:rgba(255,255,255,.07);transform:translateY(-2px)}.img-wrap{width:100%;padding-bottom:100%;position:relative;overflow:hidden;background:rgba(255,255,255,.05);flex-shrink:0}.img-wrap img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}.card-name{padding:7px 9px;font-size:12px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.badge{position:absolute;top:7px;right:7px;font-size:8px;font-weight:700;letter-spacing:.04em;padding:2px 6px;border-radius:4px;text-transform:uppercase}.status{color:rgba(255,255,255,.25);font-size:12px;padding:0 12px 12px;flex-shrink:0}`
+function buildGamesSrcdoc(accentRgb = '255,255,255') {
+  const A = accentRgb
+  const css = `*{box-sizing:border-box;margin:0;padding:0}html{width:100%;height:100%}body{width:100%;min-height:100%;background:transparent;color:rgba(255,255,255,.82);font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;overflow-y:auto;padding-bottom:120px}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}select,input{font:inherit;color:rgba(255,255,255,.78);outline:none;appearance:none;-webkit-appearance:none}option{background:#0d0d14;color:rgba(255,255,255,.78)}.controls{display:flex;flex-direction:column;gap:.4rem;padding:.75rem 1rem .6rem;flex-shrink:0;position:sticky;top:0;z-index:10;background:rgba(6,6,14,.9);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,255,255,.07)}.search-row{display:flex;justify-content:center}.filter-row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;justify-content:center}.search-input{width:100%;max-width:500px;padding:.55rem 1.2rem;border-radius:9999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);font-size:.8rem;transition:border-color .2s,box-shadow .2s}.search-input::placeholder{color:rgba(255,255,255,.25)}.search-input:focus{border-color:rgba(${A},.5);box-shadow:0 0 0 3px rgba(${A},.1)}.ctrl{padding:.45rem .85rem;border-radius:.6rem;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);font-size:.75rem;cursor:pointer;transition:border-color .2s,background .2s}.ctrl:hover,.ctrl:focus{border-color:rgba(${A},.45);background:rgba(255,255,255,.09)}select.ctrl{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='rgba(255,255,255,.3)'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right .6rem center;padding-right:1.8rem}.grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:.85rem;padding:1rem}.card{--bsz:2px;--ssz:220px;--hue:calc(var(--base,220) + var(--mxp,0)*var(--spread,160));background-image:radial-gradient(var(--ssz) var(--ssz) at calc(var(--mx,-9999)*1px) calc(var(--my,-9999)*1px),hsl(var(--hue) 100% 70%/.12),transparent);background-color:hsl(0 0% 60%/.06);border:var(--bsz) solid hsl(0 0% 60%/.14);border-radius:14px;position:relative;cursor:pointer;overflow:hidden;transition:transform .22s ease,box-shadow .22s ease}.card:hover{transform:scale(1.04);box-shadow:0 12px 40px rgba(0,0,0,.55);z-index:2}.card::before,.card::after{pointer-events:none;content:"";position:absolute;inset:0;border:var(--bsz) solid transparent;border-radius:14px;background-size:100% 100%;background-repeat:no-repeat;mask:linear-gradient(transparent,transparent),linear-gradient(white,white);mask-clip:padding-box,border-box;mask-composite:intersect;-webkit-mask:linear-gradient(transparent,transparent),linear-gradient(white,white);-webkit-mask-clip:padding-box,border-box;-webkit-mask-composite:source-in}.card::before{background-image:radial-gradient(calc(var(--ssz)*.75) calc(var(--ssz)*.75) at calc(var(--mx,-9999)*1px) calc(var(--my,-9999)*1px),hsl(var(--hue) 100% 50%/1),transparent 100%);filter:brightness(2)}.card::after{background-image:radial-gradient(calc(var(--ssz)*.5) calc(var(--ssz)*.5) at calc(var(--mx,-9999)*1px) calc(var(--my,-9999)*1px),hsl(0 100% 100%/1),transparent 100%)}.img-wrap{width:100%;padding-bottom:100%;position:relative;overflow:hidden;background:rgba(255,255,255,.04)}.img-wrap img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;transition:transform .3s ease}.card:hover .img-wrap img{transform:scale(1.06)}.card-overlay{position:absolute;bottom:0;left:0;right:0;padding:.5rem .6rem .55rem;background:linear-gradient(to top,rgba(0,0,0,.88) 0%,transparent 100%);opacity:0;transition:opacity .22s ease;pointer-events:none}.card:hover .card-overlay{opacity:1}.card-name{font-size:.68rem;font-weight:600;color:rgba(255,255,255,.92);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:-.01em}.badge{position:absolute;top:.4rem;right:.4rem;font-size:.52rem;font-weight:700;letter-spacing:.05em;padding:2px 6px;border-radius:5px;text-transform:uppercase;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}.status{color:rgba(255,255,255,.2);font-size:.75rem;padding:.75rem 1rem 1.5rem;text-align:center;flex-shrink:0}`
 
   const provMeta = {
     'gn-math':  { label: 'GN-Math',   color: '#00bfff' },
@@ -806,39 +900,44 @@ function buildGamesSrcdoc() {
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>
 <div class="controls">
-  <select id="provSel" class="ctrl">
-    <option value="gn-math">GN-Math</option>
-    <option value="truffled">Truffled.lol</option>
-    <option value="petezah">PeteZah</option>
-    <option value="elite">Elite Gamez</option>
-    <option value="sea-bean">Sea Bean</option>
-    <option value="ugs">UGS</option>
-    <option value="blox">Bloxcraft UBG</option>
-    <option value="seraph">Seraph</option>
-  </select>
-  <input id="search" class="ctrl" placeholder="search games...">
-  <select id="sortSel" class="ctrl">
-    <option value="a-z">A–Z</option>
-    <option value="z-a">Z–A</option>
-    <option value="latest">Latest</option>
-    <option value="oldest">Oldest</option>
-  </select>
-  <select id="catSel" class="ctrl" style="display:none">
-    <option value="">All Categories</option>
-    <option value="action">Action</option>
-    <option value="racing">Racing</option>
-    <option value="strategy">Strategy</option>
-    <option value="sports">Sports</option>
-    <option value="skill">Skill</option>
-    <option value="shooting">Shooting</option>
-    <option value="2 player">2 Player</option>
-    <option value="io">IO</option>
-  </select>
+  <div class="search-row">
+    <input id="search" class="search-input" placeholder="Search games...">
+  </div>
+  <div class="filter-row">
+    <select id="provSel" class="ctrl">
+      <option value="gn-math">GN-Math</option>
+      <option value="truffled">Truffled.lol</option>
+      <option value="petezah">PeteZah</option>
+      <option value="elite">Elite Gamez</option>
+      <option value="sea-bean">Sea Bean</option>
+      <option value="ugs">UGS</option>
+      <option value="blox">Bloxcraft UBG</option>
+      <option value="seraph">Seraph</option>
+    </select>
+    <select id="sortSel" class="ctrl">
+      <option value="a-z">A–Z</option>
+      <option value="z-a">Z–A</option>
+      <option value="latest">Latest</option>
+      <option value="oldest">Oldest</option>
+    </select>
+    <select id="catSel" class="ctrl" style="display:none">
+      <option value="">All Categories</option>
+      <option value="action">Action</option>
+      <option value="racing">Racing</option>
+      <option value="strategy">Strategy</option>
+      <option value="sports">Sports</option>
+      <option value="skill">Skill</option>
+      <option value="shooting">Shooting</option>
+      <option value="2 player">2 Player</option>
+      <option value="io">IO</option>
+    </select>
+  </div>
 </div>
 <div class="grid" id="grid"></div>
 <div class="status" id="status"></div>
 <script>
 var PM=${JSON.stringify(provMeta)};
+var PROV_HUE={'gn-math':200,'elite':20,'petezah':280,'sea-bean':160,'seraph':140,'blox':38,'truffled':330,'ugs':215};
 var allGames=[], provSel=document.getElementById('provSel'), sortSel=document.getElementById('sortSel'),
     catSel=document.getElementById('catSel'), search=document.getElementById('search'),
     grid=document.getElementById('grid'), status=document.getElementById('status');
@@ -969,10 +1068,16 @@ function render(list){
     img.loading='lazy';
     img.onerror=function(){this.style.opacity='.15';};
     wrap.appendChild(img);
+    var overlay=document.createElement('div');overlay.className='card-overlay';
     var nameDiv=document.createElement('div');nameDiv.className='card-name';nameDiv.textContent=g.name;
+    overlay.appendChild(nameDiv);
     var badge=document.createElement('span');badge.className='badge';badge.textContent=m.label;
     badge.style.cssText='background:'+m.color+'22;color:'+m.color+';border:1px solid '+m.color+'55';
-    card.appendChild(wrap);card.appendChild(nameDiv);card.appendChild(badge);
+    card.style.setProperty('--base', PROV_HUE[g.provider]||220);
+    card.style.setProperty('--spread', 160);
+    card.addEventListener('mousemove',function(e){var r=this.getBoundingClientRect();this.style.setProperty('--mx',(e.clientX-r.left).toFixed(2));this.style.setProperty('--my',(e.clientY-r.top).toFixed(2));this.style.setProperty('--mxp',((e.clientX-r.left)/r.width).toFixed(2));});
+    card.addEventListener('mouseleave',function(){this.style.setProperty('--mx','-9999');this.style.setProperty('--my','-9999');});
+    card.appendChild(wrap);card.appendChild(overlay);card.appendChild(badge);
     card.onclick=function(){window.parent.__cherriLaunchGame&&window.parent.__cherriLaunchGame(g);};
     grid.appendChild(card);
   });
@@ -1276,126 +1381,105 @@ function tvViewHTML() {
 }
 
 function chatViewHTML() {
-  const tabOn  = 'px-4 py-1.5 rounded-full text-xs border border-white/35 text-white bg-white/[0.09] transition-colors cursor-pointer'
-  const tabOff = 'px-4 py-1.5 rounded-full text-xs border border-white/10 text-white/40 bg-white/[0.03] hover:bg-white/[0.06] transition-colors cursor-pointer'
-  const nick        = _currentNick()
-  const isLoggedIn  = !!_authUser
-  const headerTitle = _chatMode === 'dm' && _chatDmPartner ? `DM · ${_escHtml(_chatDmPartner)}` : 'Global Chat'
-  const inputPH     = _chatMode === 'dm' && !_chatDmPartner ? 'Enter username to DM…' : 'Message…'
+  const nick       = _currentNick()
+  const isLoggedIn = !!_authUser
+  const isGlobal   = _chatMode === 'global'
+  const isDM       = _chatMode === 'dm'
+  const hasDmPeer  = isDM && !!_chatDmPartner
+  const chanLabel  = hasDmPeer ? `@ ${_escHtml(_chatDmPartner)}` : '# global'
+  const inputPH    = hasDmPeer ? `Message ${_escHtml(_chatDmPartner)}…` : 'Send a message…'
+
+  // ── DM search screen ──
+  const dmSearchPanel = `
+    <div class="chat-dm-search">
+      <div class="chat-dm-search-icon" style="color:var(--accent-color)">${icoMsgSquare(30)}</div>
+      <h3 class="chat-dm-search-title">New Direct Message</h3>
+      <p class="chat-dm-search-sub">Type a username below, or click someone in the sidebar</p>
+      <div class="chat-dm-find-wrap">
+        <input id="chat-dm-find" type="text" placeholder="Find a user…"
+               autocomplete="off" spellcheck="false" class="chat-dm-find-input" />
+        <button id="chat-dm-go" class="chat-dm-go-btn">
+          Open DM ${icoArrowRight(14)}
+        </button>
+      </div>
+      <div id="chat-dm-status" class="chat-dm-status-msg" style="display:none"></div>
+    </div>`
+
+  // ── Message area + input ──
+  const imgLeft = _IMG_DAY_MAX - _imgUsedToday()
+  const chatPanel = `
+    <div id="chat-messages" class="chat-feed">
+    </div>
+    <div class="chat-input-row">
+      <div id="chat-notice" class="chat-notice"></div>
+      <form id="chat-form" class="chat-input-wrap">
+        <input id="chat-img-file" type="file" accept="image/*" style="display:none">
+        <button type="button" id="chat-img-btn" class="chat-img-btn" title="Upload image (${imgLeft} left today)">
+          ${icoImage(16)}
+        </button>
+        <input id="chat-input" type="text" placeholder="${inputPH}"
+               autocomplete="off" maxlength="500" class="chat-input-field">
+        <button type="submit" class="chat-send-btn" title="Send">${icoArrowRight(16)}</button>
+      </form>
+    </div>`
+
   return `
-    <div style="position:relative;width:100%;height:calc(100dvh - 7.5rem)">
+    <div class="chat-outer">
 
-      <!-- ── Real chat UI (preserved under overlay) ── -->
-      <div class="flex flex-col w-full" style="height:100%">
+      <!-- ══ LEFT: main chat ══ -->
+      <div class="chat-main">
 
-        <!-- Header -->
-        <div class="flex items-center justify-between px-4 py-3 mb-3 flex-shrink-0
-                    bg-white/[0.03] border border-white/[0.08] rounded-2xl">
-          <div class="flex items-center gap-2.5">
-            <span class="text-white/80 font-semibold text-sm tracking-wide">${headerTitle}</span>
-            <span class="text-white/20 text-xs">·</span>
-            <span id="chat-nick-display" class="text-white/30 text-xs font-mono">${_escHtml(nick)}</span>
-            ${isLoggedIn ? '' : '<span class="text-white/20 text-[10px] font-mono">(guest)</span>'}
+        <!-- Top bar -->
+        <div class="chat-topbar">
+          <div class="flex items-center gap-3">
+            ${hasDmPeer
+              ? `<button id="chat-back-btn" class="chat-back-btn">${icoArrowLeft(14)}</button>`
+              : `<div class="chat-chan-icon" style="color:var(--accent-color)">${icoMsgSquare(16)}</div>`
+            }
+            <span class="chat-chan-label">${chanLabel}</span>
           </div>
-          <div class="flex items-center gap-2">
-            ${!isLoggedIn ? `<button id="chat-login-btn" class="text-[10px] px-3 py-1 rounded-full border border-white/15 text-white/40 hover:text-white/80 hover:border-white/30 transition-colors cursor-pointer">Sign in</button>` : ''}
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0"
-                  style="box-shadow:0 0 6px rgba(52,211,153,0.7)"></span>
-            <span id="online-count" class="text-white/30 text-xs">0</span>
-            <span class="text-white/20 text-xs">online</span>
+
+          <div class="flex items-center gap-3">
+            ${!hasDmPeer ? `
+              <div class="chat-tabs-wrap">
+                <button id="chat-tab-global" class="chat-tab-pill${isGlobal ? ' active' : ''}">
+                  ${icoGlobe(12)} Global
+                </button>
+                <button id="chat-tab-dm" class="chat-tab-pill${isDM ? ' active' : ''}">
+                  ${icoMsgSquare(12)} DM
+                </button>
+              </div>` : ''}
+            <div class="chat-online-pill">
+              <span class="chat-online-dot"></span>
+              <span id="online-count" class="text-white/80 text-xs font-bold tabular-nums">0</span>
+              <span class="text-white/35 text-xs">online</span>
+            </div>
+            ${!isLoggedIn ? `<button id="chat-login-btn" class="chat-signin-btn">Sign in</button>` : ''}
           </div>
         </div>
 
-        <!-- Mode tabs -->
-        <div class="flex items-center gap-2 mb-3 flex-shrink-0">
-          <button id="chat-tab-global" class="${_chatMode === 'global' ? tabOn : tabOff}">Global</button>
-          <button id="chat-tab-dm"     class="${_chatMode === 'dm'     ? tabOn : tabOff}">DM</button>
-          <input id="chat-dm-input" type="text" placeholder="Username to DM…"
-                 value="${_escHtml(_chatDmPartner)}"
-                 autocomplete="off" spellcheck="false"
-                 class="flex-1 bg-white/[0.04] border border-white/[0.08] rounded-full
-                        px-3 py-1.5 text-xs text-white/70 outline-none placeholder-white/20
-                        transition-opacity"
-                 style="opacity:${_chatMode === 'dm' ? '1' : '0'};pointer-events:${_chatMode === 'dm' ? 'auto' : 'none'}">
-          <div id="chat-dm-status" class="text-[10px] text-red-400 flex-shrink-0" style="display:none"></div>
-        </div>
-
-        <!-- Messages -->
-        <div id="chat-messages"
-             class="flex-1 min-h-0 overflow-y-auto flex flex-col gap-2 pb-1 px-1">
-        </div>
-
-        <!-- Input -->
-        <form id="chat-form"
-              class="flex items-center gap-2 mt-3 flex-shrink-0
-                     bg-white/[0.04] border border-white/[0.08] rounded-full px-4 py-2.5">
-          <input id="chat-input" type="text" placeholder="${inputPH}"
-                 autocomplete="off" maxlength="500"
-                 class="flex-1 bg-transparent outline-none text-white/80 text-sm
-                        placeholder-white/20 caret-white/40 min-w-0">
-          <button type="submit"
-                  class="text-white/30 hover:text-white/80 transition-colors flex-shrink-0">
-            ${icoArrowRight(15)}
-          </button>
-        </form>
+        <!-- Main panel -->
+        ${isDM && !hasDmPeer ? dmSearchPanel : chatPanel}
 
       </div>
 
-      <!-- ── Maintenance countdown overlay (sits on top) ── -->
-      <div class="chat-maint-overlay">
-        <div class="countdown-blob-a"></div>
-        <div class="countdown-blob-b"></div>
+      <!-- ══ RIGHT: sidebar ══ -->
+      <div class="chat-sidebar">
 
-        <div class="countdown-card">
-
-          <div class="countdown-badge">
-            <span class="countdown-badge-icon" style="color:var(--accent-color)">${icoMsgSquare(13)}</span>
-            <span>Under Maintenance</span>
-          </div>
-
-          <div class="countdown-text-block">
-            <h1 class="countdown-heading">Orbit <span style="color:var(--accent-color)">Chat</span></h1>
-            <p class="countdown-sub">
-              Chat is temporarily offline while we roll out improvements.
-              Back online when the timer hits zero.
-            </p>
-          </div>
-
-          <div class="countdown-timer">
-            <div class="countdown-unit">
-              <div class="countdown-box">
-                <span id="chat-cd-h" class="countdown-digit">00</span>
-              </div>
-              <span class="countdown-label">Hours</span>
-            </div>
-            <span class="countdown-colon">:</span>
-            <div class="countdown-unit">
-              <div class="countdown-box">
-                <span id="chat-cd-m" class="countdown-digit">00</span>
-              </div>
-              <span class="countdown-label">Minutes</span>
-            </div>
-            <span class="countdown-colon">:</span>
-            <div class="countdown-unit">
-              <div class="countdown-box">
-                <span id="chat-cd-s" class="countdown-digit">00</span>
-              </div>
-              <span class="countdown-label">Seconds</span>
-            </div>
-          </div>
-
-          <div class="countdown-actions">
-            <button class="cd-btn-primary" id="chat-cd-notify-btn">
-              <span>Get Notified</span>
-              ${icoArrowRight(15)}
-            </button>
-            <button class="cd-btn-secondary" id="chat-cd-cal-btn">
-              ${icoClock(15)}
-              <span>Add to Calendar</span>
-            </button>
-          </div>
-
+        <div class="chat-sb-section">
+          <div class="chat-sb-section-label">${icoUser(10)} Online Now</div>
+          <div id="chat-sidebar-users" class="chat-sidebar-users"></div>
         </div>
+
+        <div class="chat-sb-section chat-sb-you-section">
+          <div class="chat-sb-section-label">${icoUser(10)} You</div>
+          <div class="chat-sb-self-row">
+            <span class="chat-sb-dot"></span>
+            <span class="chat-sb-name" style="color:var(--accent-color)">${_escHtml(nick)}</span>
+            ${isLoggedIn ? '' : '<span class="chat-sb-you">guest</span>'}
+          </div>
+        </div>
+
       </div>
 
     </div>`
@@ -1692,50 +1776,59 @@ function profileViewHTML() {
     </div>`
   }
 
-  // Not logged in — show auth form
+  // Not logged in — fancy sign-in card
   return `
-    <div class="flex flex-col gap-4 w-full max-w-xs mx-auto pt-4">
+    <div class="signin-wrap" id="signin-wrap">
 
-      <!-- Brand -->
-      <div class="text-center mb-2 select-none">
-        <div class="text-2xl font-black tracking-tight" style="color:var(--accent-color)">ORBIT</div>
-        <div class="text-white/25 text-xs mt-1">Create an account or sign in</div>
-      </div>
+      <!-- ── 3D tilt wrapper ── -->
+      <div id="signin-3d" class="signin-3d">
+        <div class="signin-card" id="signin-card">
 
-      <!-- Tabs -->
-      <div class="flex gap-2 p-1 bg-white/[0.03] border border-white/[0.07] rounded-full">
-        <button id="auth-tab-login"    class="auth-tab auth-tab-active flex-1 py-1.5 rounded-full text-xs font-semibold transition-colors">Sign In</button>
-        <button id="auth-tab-register" class="auth-tab flex-1 py-1.5 rounded-full text-xs font-semibold transition-colors">Register</button>
-      </div>
+          <!-- traveling light beams -->
+          <div class="signin-beams" aria-hidden="true">
+            <span class="sbeam sbeam-top"></span>
+            <span class="sbeam sbeam-right"></span>
+            <span class="sbeam sbeam-bottom"></span>
+            <span class="sbeam sbeam-left"></span>
+          </div>
 
-      <!-- Form -->
-      <div class="flex flex-col gap-3 bg-white/[0.03] border border-white/[0.07] rounded-2xl p-5">
-        <div class="flex flex-col gap-1.5">
-          <label class="text-white/30 text-[10px] uppercase tracking-widest">Username</label>
-          <input id="auth-username" type="text" autocomplete="username" autocorrect="off"
-                 autocapitalize="off" spellcheck="false" maxlength="20"
-                 placeholder="your_username"
-                 class="bg-white/[0.05] border border-white/[0.1] rounded-xl px-3 py-2.5
-                        text-white/85 text-sm outline-none placeholder-white/20 font-mono
-                        focus:border-white/25 transition-colors caret-white/50">
+          <!-- Logo -->
+          <div class="signin-logo-wrap">
+            <div class="signin-logo">O</div>
+          </div>
+          <h1 class="signin-title">Welcome Back</h1>
+          <p class="signin-sub">Sign in to continue to Orbit</p>
+
+          <!-- Tabs -->
+          <div class="signin-tabs-wrap">
+            <button id="auth-tab-login"    class="signin-tab signin-tab-active">Sign In</button>
+            <button id="auth-tab-register" class="signin-tab">Register</button>
+          </div>
+
+          <!-- Fields -->
+          <div class="signin-fields">
+            <div class="signin-field">
+              <span class="sfield-ico">${icoUser(15)}</span>
+              <input id="auth-username" type="text" placeholder="Username"
+                     autocomplete="username" autocorrect="off" autocapitalize="off"
+                     spellcheck="false" maxlength="20" class="sfield-input" />
+            </div>
+            <div class="signin-field">
+              <span class="sfield-ico">${icoLock(15)}</span>
+              <input id="auth-password" type="password" placeholder="Password"
+                     autocomplete="current-password" maxlength="128" class="sfield-input signin-input-pw" />
+              <button id="auth-pw-toggle" class="sfield-eye" type="button" tabindex="-1">
+                ${icoEyeOff(15)}
+              </button>
+            </div>
+          </div>
+
+          <div id="auth-error" class="signin-error hidden"></div>
+
+          <button id="auth-submit" class="signin-submit" type="button">Sign In</button>
+
         </div>
-        <div class="flex flex-col gap-1.5">
-          <label class="text-white/30 text-[10px] uppercase tracking-widest">Password</label>
-          <input id="auth-password" type="password" autocomplete="current-password" maxlength="128"
-                 placeholder="••••••••"
-                 class="bg-white/[0.05] border border-white/[0.1] rounded-xl px-3 py-2.5
-                        text-white/85 text-sm outline-none placeholder-white/20
-                        focus:border-white/25 transition-colors caret-white/50">
-        </div>
-        <div id="auth-error" class="text-red-400 text-xs hidden"></div>
-        <button id="auth-submit"
-                class="w-full py-2.5 rounded-xl font-semibold text-sm transition-all cursor-pointer
-                       text-black"
-                style="background:var(--accent-color);box-shadow:0 0 12px rgba(var(--accent-rgb),.3)">
-          Sign In
-        </button>
       </div>
-
     </div>`
 }
 
@@ -1823,7 +1916,7 @@ function syncDockActive() {
 function bindViewEvents() {
   if (state.view === 'games') {
     const frame = document.getElementById('games-frame')
-    if (frame) frame.srcdoc = buildGamesSrcdoc()
+    if (frame) frame.srcdoc = buildGamesSrcdoc(state.accentRgb)
   }
   if (state.view === 'tv') {
     const frame = document.getElementById('tv-frame')
@@ -1831,90 +1924,107 @@ function bindViewEvents() {
   }
 
   if (state.view === 'chat') {
-    _loadChatMessages()
+    // Load messages when in a real channel (global or active DM)
+    if (_chatMode === 'global' || (_chatMode === 'dm' && _chatDmPartner)) {
+      _loadChatMessages()
+    }
 
+    // ── Send message ──
     document.getElementById('chat-form')?.addEventListener('submit', e => {
       e.preventDefault()
       _sendChatMessage()
     })
 
+    // ── Image upload ──
+    const imgBtn  = document.getElementById('chat-img-btn')
+    const imgFile = document.getElementById('chat-img-file')
+    imgBtn?.addEventListener('click', () => {
+      if (_imgUsedToday() >= _IMG_DAY_MAX) {
+        _chatShowNotice(`Image limit reached (${_IMG_DAY_MAX}/day)`)
+        return
+      }
+      imgFile?.click()
+    })
+    imgFile?.addEventListener('change', () => {
+      const file = imgFile?.files?.[0]
+      if (file) { _sendChatImage(file); imgFile.value = '' }
+    })
+
+    // ── Tab: Global ──
     document.getElementById('chat-tab-global')?.addEventListener('click', () => {
-      _chatDmPartner = ''
-      _switchChat('global')
+      _switchChat('global', '', '')
     })
 
+    // ── Tab: DM (go to search screen) ──
     document.getElementById('chat-tab-dm')?.addEventListener('click', () => {
-      const dmInput = document.getElementById('chat-dm-input')
-      _applyChatTabStyles('dm')
-      _chatMode = 'dm'
-      dmInput?.focus()
+      _switchChat('dm', '', '')
     })
 
-    document.getElementById('chat-dm-input')?.addEventListener('keydown', async e => {
-      if (e.key !== 'Enter') return
-      const target = e.target.value.trim()
-      if (!target) return
+    // ── Back button (inside DM conversation → back to DM search) ──
+    document.getElementById('chat-back-btn')?.addEventListener('click', () => {
+      _teardownChatMessages()
+      _switchChat('dm', '', '')
+    })
+
+    // ── DM search: start chat button + Enter key ──
+    async function _startDm() {
+      const input    = document.getElementById('chat-dm-find')
       const statusEl = document.getElementById('chat-dm-status')
+      const target   = input?.value.trim() ?? ''
+      if (!target) return
+
       if (statusEl) { statusEl.style.display = 'none'; statusEl.textContent = '' }
+
       if (!_authUser) {
-        // Guest fallback: use raw input as room code
-        _chatDmPartner = target
-        _switchChat('dm', target)
+        // Guest: use raw username as room code
+        _switchChat('dm', target, target)
         return
       }
       if (target.toLowerCase() === _currentNick().toLowerCase()) {
         if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = "That's you!" }
         return
       }
+
+      // Disable button while looking up
+      const btn = document.getElementById('chat-dm-go')
+      if (btn) { btn.disabled = true; btn.textContent = '…' }
+
       const key = await _dmKey(target)
       if (!key) {
         if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'User not found' }
+        if (btn) { btn.disabled = false; btn.innerHTML = 'Start Chat ' + icoArrowRight(14) }
         return
       }
-      _chatDmPartner = target
-      _switchChat('dm', key)
-      // Update header title
-      const hdr = document.querySelector('#chat-messages')?.closest('.flex.flex-col')?.querySelector('.font-semibold')
-      if (hdr) hdr.textContent = `DM · ${target}`
+      _switchChat('dm', key, target)
+    }
+
+    document.getElementById('chat-dm-go')?.addEventListener('click', _startDm)
+    document.getElementById('chat-dm-find')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') _startDm()
     })
 
     document.getElementById('chat-login-btn')?.addEventListener('click', () => {
       setState({ view: 'profile' })
     })
 
-    // Focus input on open (it's under the overlay but binding is preserved)
+    // ── Sidebar: click user → start DM ──
+    document.getElementById('chat-sidebar-users')?.addEventListener('click', async e => {
+      const userEl = e.target.closest('.chat-sidebar-user')
+      if (!userEl) return
+      const username = userEl.dataset.username
+      if (!username || username === _currentNick()) return
+      if (!_authUser) { _switchChat('dm', username, username); return }
+      const key = await _dmKey(username)
+      if (key) _switchChat('dm', key, username)
+    })
+
+    // Focus the right input
     document.getElementById('chat-input')?.focus()
-
-    // Maintenance overlay countdown — globally consistent via RTDB
-    document.getElementById('chat-cd-notify-btn')?.addEventListener('click', () => {
-      setState({ view: 'profile' })
-    })
-    document.getElementById('chat-cd-cal-btn')?.addEventListener('click', () => {
-      if (!_chatCdTarget) return
-      const fmt = new Date(_chatCdTarget).toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z'
-      window.open(
-        `https://calendar.google.com/calendar/render?action=TEMPLATE&text=Orbit+Chat+Back+Online&dates=${fmt}/${fmt}`,
-        '_blank', 'noopener,noreferrer'
-      )
-    })
-
-    ;(async () => {
-      _chatCdTarget = await _resolveCountdownTarget('countdown/chat', 'orbit_chat_cd')
-      const tick = () => {
-        if (!document.getElementById('chat-cd-h')) { clearInterval(_cdInterval); _cdInterval = null; return }
-        const diff = Math.max(0, _chatCdTarget - Date.now())
-        _cdSetDigit('chat-cd-h', Math.floor(diff / 3600000))
-        _cdSetDigit('chat-cd-m', Math.floor((diff % 3600000) / 60000))
-        _cdSetDigit('chat-cd-s', Math.floor((diff % 60000) / 1000))
-      }
-      tick()
-      clearInterval(_cdInterval)
-      _cdInterval = setInterval(tick, 1000)
-    })()
+    document.getElementById('chat-dm-find')?.focus()
   }
 
   if (state.view === 'profile') {
-    // Auth form tab switching
+    // ── Auth form ────────────────────────────────────────────────────────────
     let _authMode = 'login'
 
     const tabLogin    = document.getElementById('auth-tab-login')
@@ -1924,10 +2034,8 @@ function bindViewEvents() {
 
     function _setAuthMode(mode) {
       _authMode = mode
-      const activeClass = 'bg-white/[0.1] text-white'
-      const inactiveClass = 'text-white/35'
-      if (tabLogin)    tabLogin.className    = 'auth-tab flex-1 py-1.5 rounded-full text-xs font-semibold transition-colors ' + (mode === 'login'    ? activeClass : inactiveClass)
-      if (tabRegister) tabRegister.className = 'auth-tab flex-1 py-1.5 rounded-full text-xs font-semibold transition-colors ' + (mode === 'register' ? activeClass : inactiveClass)
+      tabLogin?.classList.toggle('signin-tab-active', mode === 'login')
+      tabRegister?.classList.toggle('signin-tab-active', mode === 'register')
       if (submitBtn)   submitBtn.textContent = mode === 'login' ? 'Sign In' : 'Create Account'
       if (errorEl)     { errorEl.classList.add('hidden'); errorEl.textContent = '' }
     }
@@ -1949,7 +2057,6 @@ function bindViewEvents() {
         swapView()
       } catch (err) {
         let msg = err.message || 'Something went wrong'
-        // Clean up Firebase error messages
         if (msg.includes('email-already-in-use') || msg.includes('already taken')) msg = 'Username already taken'
         else if (msg.includes('wrong-password') || msg.includes('invalid-credential')) msg = 'Incorrect username or password'
         else if (msg.includes('too-many-requests')) msg = 'Too many attempts — try again later'
@@ -1967,7 +2074,34 @@ function bindViewEvents() {
       if (e.key === 'Enter') document.getElementById('auth-password')?.focus()
     })
 
-    // Signed-in actions
+    // ── Password visibility toggle ────────────────────────────────────────
+    let _pwVisible = false
+    document.getElementById('auth-pw-toggle')?.addEventListener('click', () => {
+      _pwVisible = !_pwVisible
+      const pw  = document.getElementById('auth-password')
+      const btn = document.getElementById('auth-pw-toggle')
+      if (pw)  pw.type = _pwVisible ? 'text' : 'password'
+      if (btn) btn.innerHTML = _pwVisible ? icoEye(15) : icoEyeOff(15)
+    })
+
+    // ── 3D card tilt ─────────────────────────────────────────────────────
+    const tilt3d = document.getElementById('signin-3d')
+    const card3d = document.getElementById('signin-card')
+    if (tilt3d && card3d) {
+      tilt3d.addEventListener('mousemove', e => {
+        const r  = tilt3d.getBoundingClientRect()
+        const nx = (e.clientX - r.left  - r.width  / 2) / (r.width  / 2)
+        const ny = (e.clientY - r.top   - r.height / 2) / (r.height / 2)
+        card3d.style.setProperty('--rx', `${-ny * 10}deg`)
+        card3d.style.setProperty('--ry', `${ nx * 10}deg`)
+      })
+      tilt3d.addEventListener('mouseleave', () => {
+        card3d.style.setProperty('--rx', '0deg')
+        card3d.style.setProperty('--ry', '0deg')
+      })
+    }
+
+    // ── Signed-in actions ─────────────────────────────────────────────────
     document.getElementById('profile-signout')?.addEventListener('click', async () => {
       await _logoutAccount()
       swapView()
@@ -2312,6 +2446,10 @@ function icoExternalLink(s)  { return ico('<path d="M15 3h6v6"/><path d="M10 14 
 function icoMaximize(s)      { return ico('<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>', s) }
 function icoDownload(s)      { return ico('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>', s) }
 function icoClock(s)         { return ico('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>', s) }
+function icoLock(s)          { return ico('<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>', s) }
+function icoImage(s)         { return ico('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>', s) }
+function icoEye(s)           { return ico('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>', s) }
+function icoEyeOff(s)        { return ico('<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>', s) }
 
 // Returns true for bare domains ("youtube.com") and full URLs
 function looksLikeUrl(str) {
