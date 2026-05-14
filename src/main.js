@@ -342,6 +342,8 @@ let _chatDmPartner  = ''   // display name of DM partner
 let _chatActiveRef  = null
 let _chatUnsub      = null
 let _chatLastSender = ''   // for message grouping
+let _chatLastTs     = 0    // timestamp of last rendered message (ms)
+const _CHAT_GROUP_WINDOW = 5 * 60 * 1000  // 5 minutes
 
 function _chatMessagesRef() {
   return _chatMode === 'dm'
@@ -378,8 +380,18 @@ function _renderChatMsg(snap) {
   if (empty) empty.remove()
   const sender    = d.username || d.nickname || 'Unknown'
   const isSelf    = sender === _currentNick()
+  // Server-stamped epoch ms; fall back to client clock if absent
+  const tsMs      = typeof d.timestamp === 'number' ? d.timestamp : Date.now()
+  // Group when same author AND within 5-minute window of previous message
   const isGrouped = sender === _chatLastSender
+                 && (tsMs - _chatLastTs) <= _CHAT_GROUP_WINDOW
   _chatLastSender = sender
+  _chatLastTs     = tsMs
+
+  // Formatted clock time for hover-revealed timestamp (e.g. "10:03 PM")
+  const tsLabel = new Date(tsMs).toLocaleTimeString([], {
+    hour: 'numeric', minute: '2-digit',
+  })
 
   let bubbleContent
   if (d.type === 'image') {
@@ -395,8 +407,11 @@ function _renderChatMsg(snap) {
   wrap.className = `chat-msg-wrap ${isSelf ? 'chat-msg-self' : 'chat-msg-other'} ${isGrouped ? 'chat-msg-grouped' : ''}`
   wrap.innerHTML = `
     ${!isGrouped ? `<span class="chat-msg-sender">${_escHtml(sender)}</span>` : ''}
-    <div class="chat-bubble ${isSelf ? 'chat-bubble-self' : 'chat-bubble-other'} ${d.type === 'image' ? 'chat-bubble-img' : ''}">
-      ${bubbleContent}
+    <div class="chat-bubble-row">
+      <div class="chat-bubble ${isSelf ? 'chat-bubble-self' : 'chat-bubble-other'} ${d.type === 'image' ? 'chat-bubble-img' : ''}">
+        ${bubbleContent}
+      </div>
+      <span class="chat-msg-time" aria-hidden="true">${_escHtml(tsLabel)}</span>
     </div>`
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 50
   box.appendChild(wrap)
@@ -414,6 +429,7 @@ function _teardownChatMessages() {
 function _loadChatMessages() {
   _teardownChatMessages()
   _chatLastSender = ''
+  _chatLastTs     = 0
   const box = document.getElementById('chat-messages')
   if (box) box.innerHTML = ''
   _chatActiveRef = _chatMessagesRef()
@@ -1800,7 +1816,7 @@ function chatViewHTML() {
     </div>`
 
   return `
-    <div class="chat-outer">
+    <div class="chat-shell">
 
       <!-- ══ LEFT: main chat ══ -->
       <div class="chat-main">
@@ -1839,8 +1855,11 @@ function chatViewHTML() {
 
       </div>
 
-      <!-- ══ RIGHT: sidebar ══ -->
-      <div class="chat-sidebar">
+      <!-- ── Vertical glass divider ── -->
+      <div class="chat-divider" aria-hidden="true"></div>
+
+      <!-- ══ RIGHT: sidebar (merged into same glass shell) ══ -->
+      <aside class="chat-sidebar">
 
         <div class="chat-sb-section">
           <div class="chat-sb-section-label">${icoUser(10)} Online Now</div>
@@ -1856,7 +1875,7 @@ function chatViewHTML() {
           </div>
         </div>
 
-      </div>
+      </aside>
 
     </div>`
 }
