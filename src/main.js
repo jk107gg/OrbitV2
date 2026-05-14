@@ -69,14 +69,30 @@ const ACCENT_COLORS = Object.values(THEMES)
 
 // ── Firebase / Auth / Chat ────────────────────────────────────────────────
 
+// Firebase web config — these values are PUBLIC by design (they identify
+// the project, not authenticate). Real protection lives in security rules.
+// Env vars override at build time for forks/staging environments.
+const FIREBASE_CONFIG_FALLBACK = {
+  apiKey:            'AIzaSyAu_7Cl7y692z8WRVCM59gSRrHcfLUw3GA',
+  authDomain:        'nu-chat-92feb.firebaseapp.com',
+  databaseURL:       'https://nu-chat-92feb-default-rtdb.firebaseio.com',
+  projectId:         'nu-chat-92feb',
+  storageBucket:     'nu-chat-92feb.firebasestorage.app',
+  messagingSenderId: '401431459371',
+  appId:             '1:401431459371:web:ecab8ef0a819b28a865c6e',
+}
 const FIREBASE_CONFIG = {
-  apiKey:            import.meta.env.VITE_FB_API_KEY,
-  authDomain:        import.meta.env.VITE_FB_AUTH_DOMAIN,
-  databaseURL:       import.meta.env.VITE_FB_DATABASE_URL,
-  projectId:         import.meta.env.VITE_FB_PROJECT_ID,
-  storageBucket:     import.meta.env.VITE_FB_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FB_MESSAGING_SENDER_ID,
-  appId:             import.meta.env.VITE_FB_APP_ID,
+  apiKey:            import.meta.env.VITE_FB_API_KEY            || FIREBASE_CONFIG_FALLBACK.apiKey,
+  authDomain:        import.meta.env.VITE_FB_AUTH_DOMAIN        || FIREBASE_CONFIG_FALLBACK.authDomain,
+  databaseURL:       import.meta.env.VITE_FB_DATABASE_URL       || FIREBASE_CONFIG_FALLBACK.databaseURL,
+  projectId:         import.meta.env.VITE_FB_PROJECT_ID         || FIREBASE_CONFIG_FALLBACK.projectId,
+  storageBucket:     import.meta.env.VITE_FB_STORAGE_BUCKET     || FIREBASE_CONFIG_FALLBACK.storageBucket,
+  messagingSenderId: import.meta.env.VITE_FB_MESSAGING_SENDER_ID || FIREBASE_CONFIG_FALLBACK.messagingSenderId,
+  appId:             import.meta.env.VITE_FB_APP_ID             || FIREBASE_CONFIG_FALLBACK.appId,
+}
+// Fail loud if config still incomplete — better than cryptic Firebase error
+if (!FIREBASE_CONFIG.databaseURL || !FIREBASE_CONFIG.projectId) {
+  console.error('[Firebase] missing databaseURL or projectId — chat/auth will not work', FIREBASE_CONFIG)
 }
 const CHAT_NICK_KEY = 'orbit_chat_nickname'
 
