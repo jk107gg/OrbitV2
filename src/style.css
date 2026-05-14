@@ -17,8 +17,8 @@
 ═══════════════════════════════════════════════════════════════════════════ */
 
 @keyframes moveStars {
-  from { transform: translateY(0px); }
-  to   { transform: translateY(-2000px); }
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(0, -50%, 0); }
 }
 
 .stars-wrap {
@@ -29,6 +29,18 @@
   z-index: 0;
   background: #000000;
 }
+
+.stars-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 200%;
+  will-change: transform;
+}
+.stars-canvas-1 { animation: moveStars 60s linear infinite; }
+.stars-canvas-2 { animation: moveStars 30s linear infinite; }
+.stars-canvas-3 { animation: moveStars 18s linear infinite; }
 /* Subtle vignette — keep stars bright */
 .stars-wrap::after {
   content: '';
@@ -38,42 +50,7 @@
   pointer-events: none;
 }
 
-.stars-layer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  background: transparent;
-  border-radius: 50%;
-}
-
-.stars-layer::after {
-  content: '';
-  position: absolute;
-  top: 2000px;
-  left: 0;
-  width: inherit;
-  height: inherit;
-  border-radius: 50%;
-  box-shadow: inherit;
-}
-
-#stars1 {
-  width: 1px;
-  height: 1px;
-  animation: moveStars 60s linear infinite;
-}
-
-#stars2 {
-  width: 2px;
-  height: 2px;
-  animation: moveStars 30s linear infinite;
-}
-
-#stars3 {
-  width: 3px;
-  height: 3px;
-  animation: moveStars 18s linear infinite;
-}
+.stars-layer { will-change: transform, opacity; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    PERFORMANCE SETTINGS
@@ -134,6 +111,39 @@
 .perf-no-glow * {
   box-shadow: none !important;
   text-shadow: none !important;
+}
+
+/* Settings action buttons (Privacy section) */
+.settings-action-btn {
+  width: 100%;
+  padding: .6rem 1rem;
+  border-radius: .7rem;
+  border: 1px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.04);
+  color: rgba(255,255,255,.65);
+  font-size: .8rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background .18s, border-color .18s, color .18s;
+}
+.settings-action-btn:hover {
+  background: rgba(255,255,255,.09);
+  color: rgba(255,255,255,.9);
+  border-color: rgba(255,255,255,.18);
+}
+.settings-action-btn:disabled {
+  color: rgba(var(--accent-rgb), .7);
+  border-color: rgba(var(--accent-rgb), .3);
+  cursor: default;
+}
+.settings-action-danger {
+  border-color: rgba(255,60,60,.25);
+  color: rgba(255,100,100,.7);
+}
+.settings-action-danger:hover {
+  background: rgba(255,60,60,.08);
+  border-color: rgba(255,60,60,.45);
+  color: rgba(255,120,120,.9);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -200,9 +210,8 @@
   /* Per-theme bloom override — 'none' for most, specific stack for e.g. BLOOD */
   text-shadow: var(--title-text-shadow, none);
 
-  /* Chunky letterform — tight enough to nearly touch (Cherri spacing) */
-  font-weight: 900;
-  letter-spacing: -4px;
+  font-weight: 700;
+  letter-spacing: -2px;
 
   /* Entire filter string written by setTheme() — 'none' for text-shadow themes */
   filter: var(--title-filter, none);
@@ -211,10 +220,10 @@
 }
 
 .brand-tagline {
-  color: var(--accent-color);
-  opacity: 0.55;
-  text-shadow: 0 0 10px var(--accent-color);
-  transition: color 0.3s ease, text-shadow 0.3s ease;
+  color: rgba(255,255,255,0.35);
+  letter-spacing: 0.15em;
+  font-size: 11px;
+  transition: color 0.3s ease;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -228,10 +237,11 @@
 }
 
 .search-bar:focus-within {
-  border-color: rgba(var(--accent-rgb), 0.25);
+  border-color: rgba(var(--accent-rgb), 0.55);
   box-shadow:
     inset 0 2px 8px rgba(0, 0, 0, 0.8),
-    0 0 0 1px rgba(var(--accent-rgb), 0.08);
+    0 0 0 3px rgba(var(--accent-rgb), 0.18),
+    0 0 24px 2px rgba(var(--accent-rgb), 0.35);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -240,6 +250,7 @@
 
 .app-card {
   border: 1px solid rgba(255, 255, 255, 0.08);
+  will-change: transform, opacity;
   transition:
     transform        0.22s ease,
     background-color 0.22s ease,
@@ -248,10 +259,12 @@
 }
 
 .app-card:hover {
-  transform: translateY(-5px);
-  background-color: rgba(255, 255, 255, 0.09);
-  border-color: rgba(255, 255, 255, 0.28);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  transform: translateY(-10px) scale(1.04);
+  background-color: rgba(255, 255, 255, 0.07);
+  border-color: rgba(var(--accent-rgb), 0.45);
+  box-shadow:
+    0 20px 48px rgba(0, 0, 0, 0.55),
+    0 0 18px rgba(var(--accent-rgb), 0.18);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -261,8 +274,8 @@
 .dock {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  backdrop-filter: blur(40px);
-  -webkit-backdrop-filter: blur(40px);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }
 
 .dock-item {
@@ -1106,6 +1119,43 @@ main.browser-mode #view-content {
   margin-top: -0.25rem;
 }
 
+/* Empty-state placeholder */
+.chat-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: auto;
+  padding: 2rem 1rem;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.35);
+  animation: fadeUp 0.4s ease;
+}
+.chat-empty-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--accent-rgb), 0.08);
+  color: rgba(var(--accent-rgb), 0.7);
+  border: 1px solid rgba(var(--accent-rgb), 0.15);
+  margin-bottom: 0.6rem;
+}
+.chat-empty-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+}
+.chat-empty-sub {
+  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.3);
+  max-width: 240px;
+  line-height: 1.4;
+}
+
 /* Message bubbles */
 .chat-msg-wrap {
   display: flex;
@@ -1215,9 +1265,89 @@ main.browser-mode #view-content {
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
 }
 
-/* Games frame: transparent so starfield bleeds through the grid */
-#games-frame {
+/* Persistent games iframe — fixed overlay, hidden when not in games view */
+.games-frame-persistent {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  width: calc(100vw - 2rem);
+  height: calc(100dvh - 7.5rem);
+  border: none;
+  border-radius: 0.875rem;
   background: transparent;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+  /* Sit above <main> (z-10) but below dock (z-50) so iframe receives all input */
+  z-index: 20;
+  display: none;
+  pointer-events: none;
+}
+.games-frame-persistent.games-frame-visible {
+  display: block;
+  pointer-events: auto;
+}
+/* When games view active, neutralize main so it can't intercept iframe events */
+main.games-active {
+  pointer-events: none;
+}
+main.games-active #view-content {
+  display: none;
+}
+
+/* ── Games iframe skeleton loader ────────────────────────────────────────── */
+#games-skeleton {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  width: calc(100vw - 2rem);
+  height: calc(100dvh - 7.5rem);
+  border-radius: 0.875rem;
+  background: rgba(8, 8, 14, 0.92);
+  z-index: 21;
+  display: none;
+  pointer-events: none;
+  padding: 1rem;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+#games-skeleton.is-visible { display: block; }
+.gs-toolbar {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+.gs-pill {
+  height: 28px;
+  width: 90px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.04) 0%,
+    rgba(255,255,255,0.10) 50%,
+    rgba(255,255,255,0.04) 100%);
+  background-size: 200% 100%;
+  animation: gsShimmer 1.4s ease-in-out infinite;
+}
+.gs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 0.85rem;
+}
+.gs-card {
+  aspect-ratio: 1 / 1;
+  border-radius: 14px;
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.03) 0%,
+    rgba(var(--accent-rgb),0.10) 50%,
+    rgba(255,255,255,0.03) 100%);
+  background-size: 200% 100%;
+  animation: gsShimmer 1.4s ease-in-out infinite;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.gs-card:nth-child(2n)  { animation-delay: 0.1s; }
+.gs-card:nth-child(3n)  { animation-delay: 0.2s; }
+.gs-card:nth-child(5n)  { animation-delay: 0.3s; }
+@keyframes gsShimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1275,49 +1405,8 @@ main.browser-mode #view-content {
   z-index: 0;
 }
 
-#ob-stars1 {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 1px;
-  height: 1px;
-  border-radius: 50%;
-  background: transparent;
-  animation: moveStars 180s linear infinite;
-}
-
-#ob-stars1::after {
-  content: '';
-  position: absolute;
-  top: 2000px;
-  left: 0;
-  width: inherit;
-  height: inherit;
-  border-radius: 50%;
-  box-shadow: inherit;
-}
-
-#ob-stars2 {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
-  background: transparent;
-  animation: moveStars 90s linear infinite;
-}
-
-#ob-stars2::after {
-  content: '';
-  position: absolute;
-  top: 2000px;
-  left: 0;
-  width: inherit;
-  height: inherit;
-  border-radius: 50%;
-  box-shadow: inherit;
-}
+.ob-stars-canvas-1 { animation: moveStars 180s linear infinite; }
+.ob-stars-canvas-2 { animation: moveStars 90s  linear infinite; }
 
 /* Steps */
 .ob-step {
@@ -1620,17 +1709,6 @@ main.browser-mode #view-content {
 }
 .chat-img-btn:hover { color: rgba(255,255,255,0.75); background: rgba(255,255,255,0.07); }
 
-/* ── Chat notice toast ── */
-.chat-notice {
-  font-size: 0.72rem;
-  color: rgba(255,255,255,0.45);
-  padding: 0 0.25rem 0.35rem;
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  text-align: center;
-  min-height: 1.2em;
-}
-
 /* ── Chat image bubble ── */
 .chat-bubble-img {
   padding: 0.25rem !important;
@@ -1681,6 +1759,7 @@ main.browser-mode #view-content {
 .signin-card {
   position: relative;
   background: rgba(0,0,0,0.45);
+  will-change: transform, opacity;
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.08);

@@ -1,17 +1,16 @@
 import './style.css'
-import { initializeApp }   from 'firebase/app'
-import {
-  getDatabase, ref, push, set, remove, get,
-  onValue, onChildAdded,
-  onDisconnect, serverTimestamp,
-} from 'firebase/database'
+import { initializeApp } from 'firebase/app'
+
+// firebase/database is dynamically imported on first use (chat/auth/profile).
+// These bindings are populated by _ensureFb(); calling them before that throws.
+let getDatabase, ref, push, set, remove, get, onValue, onChildAdded, onDisconnect, serverTimestamp
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DATA — add/remove entries here; UI updates automatically
 // ═══════════════════════════════════════════════════════════════════════════
 
-const BRAND       = 'ORBIT'
-const TAGLINE     = 'YOUR PORTAL'
+const BRAND       = 'Orbit'
+const TAGLINE     = 'your portal'
 const APP_VERSION = '1.1.0'
 const CHANGELOG   = [
   'Real accounts — username & password, no email required',
@@ -22,11 +21,11 @@ const CHANGELOG   = [
 ]
 
 const APPS_DATA = [
-  { id: 'youtube', name: 'YouTube', icon: 'youtube', url: 'https://youtube.com'         },
-  { id: 'discord', name: 'Discord', icon: 'discord', url: 'https://discord.com'         },
-  { id: 'github',  name: 'GitHub',  icon: 'github',  url: 'https://github.com'          },
-  { id: 'twitch',  name: 'Twitch',  icon: 'twitch',  url: 'https://twitch.tv'           },
-  { id: 'gfnow',   name: 'GF Now',  icon: 'nvidia',  url: 'https://play.geforcenow.com' },
+  { id: 'youtube', name: 'YouTube', icon: 'youtube', url: 'https://youtube.com',         color: '#FF0000' },
+  { id: 'discord', name: 'Discord', icon: 'discord', url: 'https://discord.com',         color: '#5865F2' },
+  { id: 'github',  name: 'GitHub',  icon: 'github',  url: 'https://github.com',          color: '#ffffff' },
+  { id: 'twitch',  name: 'Twitch',  icon: 'twitch',  url: 'https://twitch.tv',           color: '#9146FF' },
+  { id: 'gfnow',   name: 'GF Now',  icon: 'nvidia',  url: 'https://play.geforcenow.com', color: '#76B900' },
 ]
 
 const DOCK_ITEMS = [
@@ -71,13 +70,13 @@ const ACCENT_COLORS = Object.values(THEMES)
 // ── Firebase / Auth / Chat ────────────────────────────────────────────────
 
 const FIREBASE_CONFIG = {
-  apiKey:            'AIzaSyAu_7Cl7y692z8WRVCM59gSRrHcfLUw3GA',
-  authDomain:        'nu-chat-92feb.firebaseapp.com',
-  databaseURL:       'https://nu-chat-92feb-default-rtdb.firebaseio.com',
-  projectId:         'nu-chat-92feb',
-  storageBucket:     'nu-chat-92feb.firebasestorage.app',
-  messagingSenderId: '401431459371',
-  appId:             '1:401431459371:web:ecab8ef0a819b28a865c6e',
+  apiKey:            import.meta.env.VITE_FB_API_KEY,
+  authDomain:        import.meta.env.VITE_FB_AUTH_DOMAIN,
+  databaseURL:       import.meta.env.VITE_FB_DATABASE_URL,
+  projectId:         import.meta.env.VITE_FB_PROJECT_ID,
+  storageBucket:     import.meta.env.VITE_FB_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FB_MESSAGING_SENDER_ID,
+  appId:             import.meta.env.VITE_FB_APP_ID,
 }
 const CHAT_NICK_KEY = 'orbit_chat_nickname'
 
@@ -94,13 +93,58 @@ let _accountName = null   // username string from users node
 function _currentNick() { return _accountName || _guestNick }
 
 const _fbApp = initializeApp(FIREBASE_CONFIG)
-const _fbDb  = getDatabase(_fbApp)
+let _fbDb = null
+let _fbStorage = null
+let _fbStorageRef, _fbStorageUploadBytes, _fbStorageGetDownloadURL
+let _fbStorageReady = null
+function _ensureFbStorage() {
+  if (_fbStorageReady) return _fbStorageReady
+  _fbStorageReady = import('firebase/storage').then(mod => {
+    _fbStorage              = mod.getStorage(_fbApp)
+    _fbStorageRef           = mod.ref
+    _fbStorageUploadBytes   = mod.uploadBytes
+    _fbStorageGetDownloadURL= mod.getDownloadURL
+    return mod
+  })
+  return _fbStorageReady
+}
+
+// Lazy-loads firebase/database on first use. Subsequent calls are a no-op.
+let _fbReady = null
+function _ensureFb() {
+  if (_fbReady) return _fbReady
+  _fbReady = import('firebase/database').then(mod => {
+    getDatabase     = mod.getDatabase
+    ref             = mod.ref
+    push            = mod.push
+    set             = mod.set
+    remove          = mod.remove
+    get             = mod.get
+    onValue         = mod.onValue
+    onChildAdded    = mod.onChildAdded
+    onDisconnect    = mod.onDisconnect
+    serverTimestamp = mod.serverTimestamp
+    _fbDb = getDatabase(_fbApp)
+    // Subscriptions that previously ran at module top-level
+    onValue(ref(_fbDb, '.info/connected'), snap => { if (snap.val()) _setPresence() })
+    onValue(ref(_fbDb, 'presence'),        snap => {
+      const val = (snap && typeof snap.val === 'function') ? (snap.val() || {}) : (snap || {})
+      const keys = Object.keys(val)
+      const el = document.getElementById('online-count')
+      if (el) el.textContent = keys.length
+      _updatePresenceSidebar(val)
+    })
+    return mod
+  })
+  return _fbReady
+}
 
 // ── Presence ──────────────────────────────────────────────────────────────
 
 let _presenceKey = null
 
 function _setPresence() {
+  if (!_fbDb) return  // not bootstrapped yet — no-op
   if (_presenceKey && _presenceKey !== _currentNick()) {
     remove(ref(_fbDb, `presence/${_presenceKey}`)).catch(() => {})
   }
@@ -110,21 +154,15 @@ function _setPresence() {
   onDisconnect(pRef).remove()
 }
 
-onValue(ref(_fbDb, '.info/connected'), snap => { if (snap.val()) _setPresence() })
-
-onValue(ref(_fbDb, 'presence'), snap => {
-  const el = document.getElementById('online-count')
-  if (el) el.textContent = snap.numChildren()
-  _updatePresenceSidebar(snap)
-})
-
-function _updatePresenceSidebar(snap) {
+function _updatePresenceSidebar(val) {
   const box = document.getElementById('chat-sidebar-users')
   if (!box) return
   box.innerHTML = ''
-  snap.forEach(child => {
-    const data     = child.val()
-    const username = data.username || child.key
+  // Accept either a DataSnapshot (legacy callers) or a plain object
+  const obj = (val && typeof val.val === 'function') ? (val.val() || {}) : (val || {})
+  for (const key of Object.keys(obj)) {
+    const data     = obj[key] || {}
+    const username = data.username || key
     const isSelf   = username === _currentNick()
     const div      = document.createElement('div')
     div.className   = 'chat-sidebar-user' + (isSelf ? ' self' : '')
@@ -135,7 +173,7 @@ function _updatePresenceSidebar(snap) {
       ${isSelf ? '<span class="chat-sb-you">you</span>' : ''}
     `
     box.appendChild(div)
-  })
+  }
 }
 
 // ── Auth helpers (RTDB + Web Crypto — no Firebase Auth / no email) ─────────
@@ -143,8 +181,12 @@ function _updatePresenceSidebar(snap) {
 const _SESSION_KEY = 'orbit_session'
 
 async function _dbGet(path) {
-  const snap = await get(ref(_fbDb, path))
-  return snap.val()
+  const TIMEOUT_MS = 10_000
+  const fetchOp = get(ref(_fbDb, path)).then(s => s.val())
+  const timeoutOp = new Promise((_, rej) =>
+    setTimeout(() => rej(new Error(`RTDB read timeout (${TIMEOUT_MS}ms): ${path}`)), TIMEOUT_MS)
+  )
+  return Promise.race([fetchOp, timeoutOp])
 }
 
 // Returns a countdown target timestamp that is globally consistent.
@@ -174,6 +216,20 @@ async function _sha256(str) {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
+// PBKDF2 password hashing — 120k iterations, 256-bit output
+const _PBKDF2_ITER = 120_000
+async function _pbkdf2(password, salt) {
+  const enc = new TextEncoder()
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits']
+  )
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: enc.encode(salt), iterations: _PBKDF2_ITER, hash: 'SHA-256' },
+    keyMaterial, 256
+  )
+  return Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
 function _genId() {
   return (crypto.randomUUID?.() ?? (Date.now().toString(36) + Math.random().toString(36).slice(2)))
 }
@@ -199,10 +255,10 @@ async function _registerAccount(username, password) {
   if (existing) throw new Error('Username already taken')
   const uid  = _genId()
   const salt = _genId()
-  const hash = await _sha256(salt + password)
+  const hash = await _pbkdf2(password, salt)
   const displayName = username.trim()
   await set(ref(_fbDb, `users/${uid}`), {
-    username: displayName, uid, salt, hash,
+    username: displayName, uid, salt, hash, algo: 'pbkdf2',
     createdAt: serverTimestamp(), bio: '',
   })
   await set(ref(_fbDb, `usernames/${lc}`), uid)
@@ -218,8 +274,29 @@ async function _loginAccount(username, password) {
   if (!uid) throw new Error('User not found')
   const data = await _dbGet(`users/${uid}`)
   if (!data?.hash) throw new Error('User not found')
-  const hash = await _sha256(data.salt + password)
-  if (hash !== data.hash) throw new Error('Incorrect password')
+
+  // Verify against the algorithm stored with the user record.
+  // Legacy users (no `algo` field) use SHA-256; auto-upgrade to PBKDF2 on success.
+  let verified = false
+  let needsUpgrade = false
+  if (data.algo === 'pbkdf2') {
+    verified = (await _pbkdf2(password, data.salt)) === data.hash
+  } else {
+    verified = (await _sha256(data.salt + password)) === data.hash
+    needsUpgrade = verified
+  }
+  if (!verified) throw new Error('Incorrect password')
+
+  if (needsUpgrade) {
+    const newSalt = _genId()
+    const newHash = await _pbkdf2(password, newSalt)
+    try {
+      await set(ref(_fbDb, `users/${uid}`), {
+        ...data, salt: newSalt, hash: newHash, algo: 'pbkdf2',
+      })
+    } catch { /* upgrade is best-effort; login still succeeds */ }
+  }
+
   _authUser    = { uid }
   _accountName = data.username
   localStorage.setItem(_SESSION_KEY, JSON.stringify({ uid, username: data.username }))
@@ -265,19 +342,38 @@ function _escHtml(s) {
     .replace(/'/g, '&#39;')
 }
 
+// Whitelist image URIs to block javascript:/data:text/html/etc. XSS vectors.
+// Allowed: data:image/{jpeg,png,webp,gif}; https URLs to Firebase Storage or our own assets.
+function _safeImageUri(s) {
+  if (typeof s !== 'string') return ''
+  const trimmed = s.trim()
+  if (/^data:image\/(jpeg|jpg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) return trimmed
+  if (/^https:\/\/(firebasestorage\.googleapis\.com|[a-z0-9-]+\.firebasestorage\.app)\/[^"<>\s]*$/i.test(trimmed)) return trimmed
+  return ''
+}
+
 function _renderChatMsg(snap) {
   const box = document.getElementById('chat-messages')
   if (!box) return
   const d = snap.val()
   if (!d?.text && !d?.image) return
+  // Hide empty-state placeholder on first message
+  const empty = box.querySelector('#chat-empty-state')
+  if (empty) empty.remove()
   const sender    = d.username || d.nickname || 'Unknown'
   const isSelf    = sender === _currentNick()
   const isGrouped = sender === _chatLastSender
   _chatLastSender = sender
 
-  const bubbleContent = d.type === 'image'
-    ? `<img src="${d.image}" class="chat-img-bubble" alt="image" loading="lazy">`
-    : _escHtml(d.text)
+  let bubbleContent
+  if (d.type === 'image') {
+    const safe = _safeImageUri(d.image)
+    bubbleContent = safe
+      ? `<img src="${_escHtml(safe)}" class="chat-img-bubble" alt="image" loading="lazy">`
+      : '<span class="text-white/30 text-xs italic">[image blocked]</span>'
+  } else {
+    bubbleContent = _escHtml(d.text)
+  }
 
   const wrap = document.createElement('div')
   wrap.className = `chat-msg-wrap ${isSelf ? 'chat-msg-self' : 'chat-msg-other'} ${isGrouped ? 'chat-msg-grouped' : ''}`
@@ -286,8 +382,9 @@ function _renderChatMsg(snap) {
     <div class="chat-bubble ${isSelf ? 'chat-bubble-self' : 'chat-bubble-other'} ${d.type === 'image' ? 'chat-bubble-img' : ''}">
       ${bubbleContent}
     </div>`
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 50
   box.appendChild(wrap)
-  box.scrollTop = box.scrollHeight
+  if (nearBottom) box.scrollTop = box.scrollHeight
 }
 
 function _teardownChatMessages() {
@@ -316,17 +413,44 @@ function _switchChat(mode, roomCode = '', partner = '') {
 }
 
 // ── Chat rate limiter (10 msgs / 60 s, per device) ────────────────────────
-const _RATE_KEY     = 'orbit_chat_rate'
-const _RATE_MAX     = 10
-const _RATE_WINDOW  = 60_000   // ms
+const _RATE_KEY      = 'orbit_chat_rate'
+const _RATE_LAST_KEY = 'orbit_chat_last'
+const _RATE_MAX      = 8           // messages per window
+const _RATE_WINDOW   = 30_000      // ms — sliding window
+const _RATE_COOLDOWN = 1200        // ms — minimum gap between sends (burst guard)
+
+// In-memory mirror — defeats trivial localStorage edits during a session
+let _rateMemStamps = null
+let _rateMemLast   = 0
 
 function _chatRateCheck() {
-  const now    = Date.now()
-  const stamps = JSON.parse(localStorage.getItem(_RATE_KEY) || '[]').filter(t => now - t < _RATE_WINDOW)
-  if (stamps.length >= _RATE_MAX) return false
+  const now = Date.now()
+  if (_rateMemStamps === null) {
+    try { _rateMemStamps = JSON.parse(localStorage.getItem(_RATE_KEY) || '[]') }
+    catch { _rateMemStamps = [] }
+    _rateMemLast = parseInt(localStorage.getItem(_RATE_LAST_KEY) || '0', 10) || 0
+  }
+  // Burst guard
+  if (now - _rateMemLast < _RATE_COOLDOWN) return false
+  // Sliding window — prune expired stamps
+  const stamps = _rateMemStamps.filter(t => now - t < _RATE_WINDOW)
+  if (stamps.length >= _RATE_MAX) {
+    _rateMemStamps = stamps
+    localStorage.setItem(_RATE_KEY, JSON.stringify(stamps))
+    return false
+  }
   stamps.push(now)
+  _rateMemStamps = stamps
+  _rateMemLast   = now
   localStorage.setItem(_RATE_KEY, JSON.stringify(stamps))
+  localStorage.setItem(_RATE_LAST_KEY, String(now))
   return true
+}
+
+// Reset memory mirror if user clears the key from settings
+function _chatRateReset() {
+  _rateMemStamps = []
+  _rateMemLast   = 0
 }
 
 // ── Image upload — 3 / calendar day ───────────────────────────────────────
@@ -345,6 +469,7 @@ function _imgIncToday() {
   localStorage.setItem(_IMG_KEY, JSON.stringify({ date, count }))
 }
 
+// Compress to a JPEG Blob (was: data URL). Smaller payload, plays nicely with Storage uploads.
 async function _compressImage(file) {
   return new Promise((resolve, reject) => {
     const MAX = 640
@@ -359,7 +484,7 @@ async function _compressImage(file) {
       canvas.width = w; canvas.height = h
       canvas.getContext('2d').drawImage(img, 0, 0, w, h)
       URL.revokeObjectURL(url)
-      resolve(canvas.toDataURL('image/jpeg', 0.72))
+      canvas.toBlob(b => b ? resolve(b) : reject(new Error('encode failed')), 'image/jpeg', 0.72)
     }
     img.src = url
   })
@@ -374,11 +499,22 @@ async function _sendChatImage(file) {
   if (file.size > 8 * 1024 * 1024)    { _chatShowNotice('Image too large (max 8 MB)'); return }
   _chatShowNotice('Uploading…')
   try {
-    const dataUrl = await _compressImage(file)
+    await _ensureFb()
+    await _ensureFbStorage()
+    const blob = await _compressImage(file)
     if (!_chatRateCheck()) { _chatShowNotice('Slow down — too many messages'); return }
+    const uid = _authUser?.uid ?? null
+    if (uid && _fbDb) {
+      try { await set(ref(_fbDb, `rateLimit/${uid}`), Date.now()) } catch {}
+    }
+    // Upload to Firebase Storage, then store the download URL in RTDB
+    const path  = `chat-images/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.jpg`
+    const sref  = _fbStorageRef(_fbStorage, path)
+    await _fbStorageUploadBytes(sref, blob, { contentType: 'image/jpeg' })
+    const url   = await _fbStorageGetDownloadURL(sref)
     await push(_chatMessagesRef(), {
-      username: _currentNick(), uid: _authUser?.uid ?? null,
-      type: 'image', image: dataUrl, timestamp: serverTimestamp()
+      username: _currentNick(), uid,
+      type: 'image', image: url, timestamp: serverTimestamp()
     })
     _imgIncToday()
     _chatShowNotice(`Images today: ${_imgUsedToday()}/${_IMG_DAY_MAX}`)
@@ -387,32 +523,68 @@ async function _sendChatImage(file) {
   }
 }
 
+let _toastSlot = null
+let _toastTimer = null
 function _chatShowNotice(msg) {
-  const el = document.getElementById('chat-notice')
-  if (!el) return
-  el.textContent = msg
-  el.style.opacity = '1'
-  clearTimeout(el._t)
-  el._t = setTimeout(() => { el.style.opacity = '0' }, 2500)
+  if (!_toastSlot || !document.body.contains(_toastSlot)) {
+    _toastSlot = document.createElement('div')
+    _toastSlot.id = 'global-toast'
+    _toastSlot.style.cssText =
+      'position:fixed;left:50%;bottom:90px;transform:translateX(-50%);' +
+      'padding:.6rem 1rem;border-radius:9999px;font-size:.78rem;' +
+      'background:rgba(20,20,28,.92);color:rgba(255,255,255,.9);' +
+      'border:1px solid rgba(var(--accent-rgb),.4);' +
+      'box-shadow:0 8px 32px rgba(0,0,0,.5);backdrop-filter:blur(12px);' +
+      '-webkit-backdrop-filter:blur(12px);z-index:9999;pointer-events:none;' +
+      'opacity:0;transition:opacity .2s ease;max-width:80vw;text-align:center'
+    document.body.appendChild(_toastSlot)
+  }
+  _toastSlot.textContent = msg
+  // Force reflow so opacity transition restarts even on repeat toasts
+  void _toastSlot.offsetWidth
+  _toastSlot.style.opacity = '1'
+  clearTimeout(_toastTimer)
+  _toastTimer = setTimeout(() => {
+    if (_toastSlot) _toastSlot.style.opacity = '0'
+  }, 2500)
 }
 
-function _sendChatMessage() {
+let _sendInFlight = false
+async function _sendChatMessage() {
   const input = document.getElementById('chat-input')
   if (!input) return
   const text = input.value.trim()
   if (!text) return
+  if (text.length > 2000) { _chatShowNotice('Message too long (max 2000)'); return }
   if (_chatMode === 'dm' && !_chatRoom.trim()) return
+  if (_sendInFlight) return
   if (!_chatRateCheck()) { _chatShowNotice('Slow down — too many messages'); return }
-  push(_chatMessagesRef(), { username: _currentNick(), uid: _authUser?.uid ?? null, text, timestamp: serverTimestamp() })
-  input.value = ''
-  input.focus()
+  _sendInFlight = true
+  try {
+    const uid = _authUser?.uid ?? null
+    // Write rateLimit timestamp first so server rules can enforce 1s cooldown
+    if (uid && _fbDb) {
+      try { await set(ref(_fbDb, `rateLimit/${uid}`), Date.now()) } catch {}
+    }
+    await push(_chatMessagesRef(), {
+      username: _currentNick(), uid, text, timestamp: serverTimestamp(),
+    })
+    input.value = ''
+    input.focus()
+  } catch (e) {
+    _chatShowNotice('Send failed')
+  } finally {
+    _sendInFlight = false
+  }
 }
 
 // ── AI Chat ───────────────────────────────────────────────────────────────
 
 let _aiMessages  = []    // { role: 'user'|'assistant', content: string }
-let _aiStreaming  = false
-let _aiAbortCtrl = null
+let _aiStreaming       = false
+let _aiAbortCtrl      = null
+let _pendingGameSearch = null
+let _signinTeardown    = null  // explicit listener cleanup for sign-in card
 
 function _appendAiMsgBubble(role, text) {
   const box = document.getElementById('ai-messages')
@@ -439,8 +611,9 @@ function _appendAiMsgBubble(role, text) {
 
   wrap.appendChild(label)
   wrap.appendChild(bubble)
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 50
   box.appendChild(wrap)
-  box.scrollTop = box.scrollHeight
+  if (nearBottom) box.scrollTop = box.scrollHeight
 
   return bubble
 }
@@ -513,7 +686,10 @@ async function _aiSend(text) {
           if (assistantBubble) {
             assistantBubble.textContent = full
             const box = document.getElementById('ai-messages')
-            if (box) box.scrollTop = box.scrollHeight
+            if (box) {
+              const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 50
+              if (nearBottom) box.scrollTop = box.scrollHeight
+            }
           }
         } catch { /* partial chunk — skip */ }
       }
@@ -638,6 +814,7 @@ function setState(patch) {
     state.query = ''
     if (prev.view === 'chat') _teardownChatMessages()
     if (prev.view === 'ai' && _aiAbortCtrl) { _aiAbortCtrl.abort(); _aiAbortCtrl = null }
+    if (prev.view === 'profile' && typeof _signinTeardown === 'function') _signinTeardown()
     swapView()
     syncDockActive()
     return
@@ -705,14 +882,42 @@ function applyAccent(rgb) {
   }
 }
 
-function regenerateStars(rgb) {
-  const s1 = document.getElementById('stars1')
-  const s2 = document.getElementById('stars2')
-  const s3 = document.getElementById('stars3')
-  if (s1) s1.style.boxShadow = starShadows(1200, 0.75, rgb)
-  if (s2) s2.style.boxShadow = starShadows(400,  0.95, rgb)
-  if (s3) s3.style.boxShadow = starShadows(80,   1.0,  rgb)
+function _drawStarLayer(canvas, count, size, alpha) {
+  if (!canvas) return
+  const dpr = window.devicePixelRatio || 1
+  const w = window.innerWidth
+  const h = window.innerHeight * 2  // canvas is 200% tall for seamless loop
+  canvas.width  = Math.floor(w * dpr)
+  canvas.height = Math.floor(h * dpr)
+  canvas.style.width  = w + 'px'
+  canvas.style.height = h + 'px'
+  const ctx = canvas.getContext('2d')
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, w, h)
+  // Draw stars in top half; the bottom half is a mirrored copy for seamless wrap
+  for (let i = 0; i < count; i++) {
+    const x = Math.random() * w
+    const y = Math.random() * (h / 2)
+    const a = alpha * (0.55 + Math.random() * 0.45)
+    ctx.fillStyle = `rgba(255,255,255,${a.toFixed(3)})`
+    ctx.fillRect(x, y, size, size)
+    // Mirror into bottom half so translateY(-50%) wraps seamlessly
+    ctx.fillRect(x, y + h / 2, size, size)
+  }
 }
+
+function regenerateStars(_rgb) {
+  _drawStarLayer(document.getElementById('stars1'), 1200, 1, 0.65)
+  _drawStarLayer(document.getElementById('stars2'), 400,  2, 0.85)
+  _drawStarLayer(document.getElementById('stars3'), 80,   3, 1.0)
+}
+
+// Redraw stars on resize (canvas size depends on viewport)
+let _starsResizeTimer
+window.addEventListener('resize', () => {
+  clearTimeout(_starsResizeTimer)
+  _starsResizeTimer = setTimeout(() => regenerateStars(null), 200)
+})
 
 // ═══════════════════════════════════════════════════════════════════════════
 // APP OVERLAY
@@ -777,12 +982,12 @@ function showGameOverlay(game) {
   el.style.cssText = 'position:fixed;inset:0;z-index:200'
   el.innerHTML = `
     <iframe id="game-iframe" class="app-iframe" style="position:absolute;inset:0;width:100%;height:100%;flex:unset"
-      sandbox="allow-scripts allow-forms allow-modals allow-pointer-lock"
+      sandbox="allow-scripts allow-popups allow-forms allow-modals allow-pointer-lock"
       allowfullscreen></iframe>
     <div class="game-pill-dock" id="game-pill-dock">
       <button id="close-game-btn" class="app-frame-close">${icoArrowLeft(14)} Games</button>
       <div class="game-pill-sep"></div>
-      <span class="game-pill-title">${game.name}</span>
+      <span class="game-pill-title">${_escHtml(game.name)}</span>
       <div class="game-pill-sep"></div>
       <button id="download-game-btn" class="app-frame-close" style="opacity:0.35;pointer-events:none" title="Save game">${icoDownload(14)} Save</button>
       <button id="fullscreen-game-btn" class="app-frame-close" style="opacity:0.35;pointer-events:none" title="Open fullscreen">${icoExternalLink(14)} Fullscreen</button>
@@ -829,6 +1034,21 @@ function showGameOverlay(game) {
     document.body.removeChild(a); URL.revokeObjectURL(url)
   })
   const iframe = document.getElementById('game-iframe')
+  const proxied = u => `/OrbitV2/proxy?url=${encodeURIComponent(u)}`
+  // Try direct fetch → srcdoc. If blocked by CORS/CSP or returns non-OK, route through the Vite proxy.
+  function loadViaProxy() {
+    return fetch(proxied(game.url))
+      .then(r => { if (!r.ok) throw new Error('proxy HTTP ' + r.status); return r.text() })
+      .then(html => {
+        cachedHTML = html
+        enableOverlayBtns()
+        if (iframe.isConnected) iframe.srcdoc = html
+      })
+      .catch(() => {
+        // Last resort: load the proxied URL directly. Proxy rewrites Content-Type to text/html.
+        if (iframe.isConnected) iframe.src = proxied(game.url)
+      })
+  }
   fetch(game.url)
     .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text() })
     .then(html => {
@@ -836,13 +1056,15 @@ function showGameOverlay(game) {
       enableOverlayBtns()
       if (iframe.isConnected) iframe.srcdoc = html
     })
-    .catch(() => {
-      // CORS fetch failed — fall back to direct src (proxy/truffled-style games)
-      if (iframe.isConnected) iframe.src = game.url
-    })
+    .catch(loadViaProxy)
 }
 
+const _WN_SEEN_KEY = 'orbit_whatsnew_seen'
+
 function showWhatsNew(prevVer) {
+  // Skip entirely if this exact version has already been viewed
+  const seen = localStorage.getItem(_WN_SEEN_KEY)
+  if (seen === APP_VERSION) return
   document.getElementById('whats-new-overlay')?.remove()
   const isFirstVisit = !prevVer
   const el = document.createElement('div')
@@ -886,11 +1108,13 @@ function showWhatsNew(prevVer) {
 
   document.getElementById('wnSignIn')?.addEventListener('click', () => {
     localStorage.setItem('orbit_version', APP_VERSION)
+    localStorage.setItem(_WN_SEEN_KEY, APP_VERSION)
     el.remove()
     setState({ view: 'profile' })
   })
   document.getElementById('wnDismiss')?.addEventListener('click', () => {
     localStorage.setItem('orbit_version', APP_VERSION)
+    localStorage.setItem(_WN_SEEN_KEY, APP_VERSION)
     el.remove()
   })
 }
@@ -924,7 +1148,9 @@ function removeWatchOverlay() {
 
 function buildGamesSrcdoc(accentRgb = '255,255,255') {
   const A = accentRgb
-  const css = `*{box-sizing:border-box;margin:0;padding:0}html{width:100%;height:100%}body{width:100%;min-height:100%;background:transparent;color:rgba(255,255,255,.82);font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;overflow-y:auto;padding-bottom:120px}::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}select,input{font:inherit;color:rgba(255,255,255,.78);outline:none;appearance:none;-webkit-appearance:none}option{background:#0d0d14;color:rgba(255,255,255,.78)}.controls{display:flex;flex-direction:column;gap:.4rem;padding:.75rem 1rem .6rem;flex-shrink:0;position:sticky;top:0;z-index:10;background:rgba(6,6,14,.9);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,255,255,.07)}.search-row{display:flex;justify-content:center}.filter-row{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;justify-content:center}.search-input{width:100%;max-width:500px;padding:.55rem 1.2rem;border-radius:9999px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.06);font-size:.8rem;transition:border-color .2s,box-shadow .2s}.search-input::placeholder{color:rgba(255,255,255,.25)}.search-input:focus{border-color:rgba(${A},.5);box-shadow:0 0 0 3px rgba(${A},.1)}.ctrl{padding:.45rem .85rem;border-radius:.6rem;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);font-size:.75rem;cursor:pointer;transition:border-color .2s,background .2s}.ctrl:hover,.ctrl:focus{border-color:rgba(${A},.45);background:rgba(255,255,255,.09)}select.ctrl{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='rgba(255,255,255,.3)'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right .6rem center;padding-right:1.8rem}.grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:.85rem;padding:1rem}.card{--bsz:2px;--ssz:220px;--hue:calc(var(--base,220) + var(--mxp,0)*var(--spread,160));background-image:radial-gradient(var(--ssz) var(--ssz) at calc(var(--mx,-9999)*1px) calc(var(--my,-9999)*1px),hsl(var(--hue) 100% 70%/.12),transparent);background-color:hsl(0 0% 60%/.06);border:var(--bsz) solid hsl(0 0% 60%/.14);border-radius:14px;position:relative;cursor:pointer;overflow:hidden;transition:transform .22s ease,box-shadow .22s ease}.card:hover{transform:scale(1.04);box-shadow:0 12px 40px rgba(0,0,0,.55);z-index:2}.card::before,.card::after{pointer-events:none;content:"";position:absolute;inset:0;border:var(--bsz) solid transparent;border-radius:14px;background-size:100% 100%;background-repeat:no-repeat;mask:linear-gradient(transparent,transparent),linear-gradient(white,white);mask-clip:padding-box,border-box;mask-composite:intersect;-webkit-mask:linear-gradient(transparent,transparent),linear-gradient(white,white);-webkit-mask-clip:padding-box,border-box;-webkit-mask-composite:source-in}.card::before{background-image:radial-gradient(calc(var(--ssz)*.75) calc(var(--ssz)*.75) at calc(var(--mx,-9999)*1px) calc(var(--my,-9999)*1px),hsl(var(--hue) 100% 50%/1),transparent 100%);filter:brightness(2)}.card::after{background-image:radial-gradient(calc(var(--ssz)*.5) calc(var(--ssz)*.5) at calc(var(--mx,-9999)*1px) calc(var(--my,-9999)*1px),hsl(0 100% 100%/1),transparent 100%)}.img-wrap{width:100%;padding-bottom:100%;position:relative;overflow:hidden;background:rgba(255,255,255,.04)}.img-wrap img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;transition:transform .3s ease}.card:hover .img-wrap img{transform:scale(1.06)}.card-overlay{position:absolute;bottom:0;left:0;right:0;padding:.5rem .6rem .55rem;background:linear-gradient(to top,rgba(0,0,0,.88) 0%,transparent 100%);opacity:0;transition:opacity .22s ease;pointer-events:none}.card:hover .card-overlay{opacity:1}.card-name{font-size:.68rem;font-weight:600;color:rgba(255,255,255,.92);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:-.01em}.badge{position:absolute;top:.4rem;right:.4rem;font-size:.52rem;font-weight:700;letter-spacing:.05em;padding:2px 6px;border-radius:5px;text-transform:uppercase;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}.status{color:rgba(255,255,255,.2);font-size:.75rem;padding:.75rem 1rem 1.5rem;text-align:center;flex-shrink:0}`
+  // CSS lives in public/games.css — fetched + browser-cached, removed from JS bundle.
+  // Accent color flows via CSS custom property set on <html>.
+  const headStyles = `<link rel="stylesheet" href="${import.meta.env.BASE_URL}games.css"><style>html{--accent-rgb:${A}}</style>`
 
   const provMeta = {
     'gn-math':  { label: 'GN-Math',   color: '#00bfff' },
@@ -937,7 +1163,7 @@ function buildGamesSrcdoc(accentRgb = '255,255,255') {
     'ugs':      { label: 'UGS',       color: '#94a3b8' },
   }
 
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body>
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">${headStyles}</head><body>
 <div class="controls">
   <div class="search-row">
     <input id="search" class="search-input" placeholder="Search games...">
@@ -996,6 +1222,20 @@ async function loadGames(){
   grid.innerHTML=''; status.textContent='loading...'; allGames=[];
   catSel.style.display=prov==='petezah'?'block':'none';
   if(prov!=='petezah')catSel.value='';
+  // Try sessionStorage cache first — 30 min TTL
+  try{
+    var cacheKey='orbit_games_'+prov;
+    var cached=sessionStorage.getItem(cacheKey);
+    if(cached){
+      var parsed=JSON.parse(cached);
+      if(parsed&&parsed.t&&Date.now()-parsed.t<1800000&&Array.isArray(parsed.games)){
+        allGames=parsed.games;
+        status.textContent='';
+        applyFilters();
+        return;
+      }
+    }
+  }catch(e){}
   try{
     if(prov==='gn-math'){
       var d=await fetch('https://cdn.jsdelivr.net/gh/freebuisness/assets/zones.json').then(r=>r.json());
@@ -1070,6 +1310,8 @@ async function loadGames(){
         }catch(e){}
       }
     }
+    // Save fetched games to sessionStorage cache
+    try{sessionStorage.setItem('orbit_games_'+prov,JSON.stringify({t:Date.now(),games:allGames}));}catch(e){}
     status.textContent='';
     applyFilters();
   }catch(e){
@@ -1091,6 +1333,7 @@ function applyFilters(){
     return 0;
   });
   render(list);
+  try{parent.postMessage({type:'orbit-games-ready',count:list.length},'*');}catch(e){}
 }
 
 function render(list){
@@ -1114,10 +1357,8 @@ function render(list){
     badge.style.cssText='background:'+m.color+'22;color:'+m.color+';border:1px solid '+m.color+'55';
     card.style.setProperty('--base', PROV_HUE[g.provider]||220);
     card.style.setProperty('--spread', 160);
-    card.addEventListener('mousemove',function(e){var r=this.getBoundingClientRect();this.style.setProperty('--mx',(e.clientX-r.left).toFixed(2));this.style.setProperty('--my',(e.clientY-r.top).toFixed(2));this.style.setProperty('--mxp',((e.clientX-r.left)/r.width).toFixed(2));});
-    card.addEventListener('mouseleave',function(){this.style.setProperty('--mx','-9999');this.style.setProperty('--my','-9999');});
     card.appendChild(wrap);card.appendChild(overlay);card.appendChild(badge);
-    card.onclick=function(){window.parent.__cherriLaunchGame&&window.parent.__cherriLaunchGame(g);};
+    card.onclick=function(){window.parent.postMessage({type:'orbit-launch-game',game:g},'*');};
     grid.appendChild(card);
   });
 }
@@ -1126,6 +1367,24 @@ provSel.onchange=loadGames;
 sortSel.onchange=applyFilters;
 catSel.onchange=applyFilters;
 search.addEventListener('input',applyFilters);
+// Single delegated mousemove on grid — covers all cards (current and future)
+grid.addEventListener('mousemove',function(e){
+  var card=e.target.closest('.card');
+  if(!card)return;
+  var r=card.getBoundingClientRect();
+  card.style.setProperty('--mx',(e.clientX-r.left).toFixed(2));
+  card.style.setProperty('--my',(e.clientY-r.top).toFixed(2));
+  card.style.setProperty('--mxp',((e.clientX-r.left)/r.width).toFixed(2));
+});
+grid.addEventListener('mouseout',function(e){
+  var card=e.target.closest('.card');
+  if(!card)return;
+  // Only reset when leaving the card (not entering child)
+  if(card.contains(e.relatedTarget))return;
+  card.style.setProperty('--mx','-9999');
+  card.style.setProperty('--my','-9999');
+});
+window.addEventListener('message',function(e){if(e.data&&e.data.type==='orbit-search'){search.value=e.data.query;if(allGames.length)applyFilters();}});
 loadGames();
 <\/script></body></html>`
 }
@@ -1153,7 +1412,7 @@ function renderItems(items){
     var poster=item.poster_path?'https://image.tmdb.org/t/p/w500'+item.poster_path:'';
     var yr=item.release_date||item.first_air_date;
     var card=document.createElement('a');card.className='card';card.href='#';
-    card.addEventListener('click',function(e){e.preventDefault();window.parent.__cherriLaunchWatch&&window.parent.__cherriLaunchWatch(item.id,type);});
+    card.addEventListener('click',function(e){e.preventDefault();window.parent.postMessage({type:'orbit-launch-watch',id:item.id,kind:type},'*');});
     var img=document.createElement('img');img.src=poster;img.alt=title;img.onerror=function(){img.style.display='none';};
     var copy=document.createElement('div');copy.className='copy';
     copy.innerHTML='<h3>'+title.replace(/</g,'&lt;')+'</h3><p>'+(yr?String(new Date(yr).getFullYear()):'')+'</p>';
@@ -1248,18 +1507,21 @@ fetch('https://api.themoviedb.org/3/'+ctype+'/'+cid+'?api_key='+KEY)
 // RENDERERS
 // ═══════════════════════════════════════════════════════════════════════════
 
-function cardHTML({ id, name, icon }) {
-  const iconSVG = ICON_MAP[icon]?.(28) ?? ''
+function cardHTML({ id, name, icon, color = '#ffffff' }) {
+  const iconSVG = ICON_MAP[icon]?.(26) ?? ''
+  const bg  = color + '22'
+  const bdr = color + '44'
   return `
     <button data-app-id="${id}"
             class="app-card flex flex-col items-center gap-3 px-5 py-5
                    rounded-2xl bg-white/[0.04] backdrop-blur-lg
-                   text-white/60 hover:text-white/95 select-none cursor-pointer
-                   border-0 outline-none">
-      <div class="w-12 h-12 flex items-center justify-center rounded-xl bg-white/[0.06]">
+                   select-none cursor-pointer border-0 outline-none"
+            style="color:${color}">
+      <div class="w-12 h-12 flex items-center justify-center rounded-xl transition-colors duration-200"
+           style="background:${bg};border:1px solid ${bdr}">
         ${iconSVG}
       </div>
-      <span class="text-[11px] font-medium tracking-wide">${name}</span>
+      <span class="text-[11px] font-medium tracking-wide text-white/70">${name}</span>
     </button>`
 }
 
@@ -1278,11 +1540,10 @@ function homeViewHTML() {
   return `
     <div class="flex flex-col items-center gap-9 w-full">
       <div class="flex flex-col items-center gap-3 select-none">
-        <h1 class="brand-title text-[5.5rem] sm:text-[7rem] font-black
-                   tracking-tighter leading-none uppercase">
+        <h1 class="brand-title text-[7rem] sm:text-[9.5rem] leading-none">
           ${BRAND}
         </h1>
-        <p class="brand-tagline text-[10px] uppercase tracking-[0.5em] font-light">${TAGLINE}</p>
+        <p id="site-tagline" class="brand-tagline font-light">${TAGLINE}</p>
       </div>
 
       <div class="w-full max-w-md">
@@ -1305,6 +1566,8 @@ function homeViewHTML() {
 function settingsBodyHTML() {
   const isAppearance  = state.settingsSection === 'appearance'
   const isPerformance = state.settingsSection === 'performance'
+  const isPrivacy     = state.settingsSection === 'privacy'
+  const isAbout       = state.settingsSection === 'about'
 
   const appearanceExpanded = isAppearance ? `
     <div class="px-5 pb-5 flex flex-col gap-3">
@@ -1344,24 +1607,53 @@ function settingsBodyHTML() {
       ${perfToggleHTML('perfNoGlow',       'Disable Glow',          'Removes box-shadow glow effects')}
     </div>` : ''
 
+  const privacyExpanded = isPrivacy ? `
+    <div class="px-5 pb-5 flex flex-col gap-2">
+      <button data-clear-key="orbit_chat_rate"
+              class="settings-action-btn">Clear chat rate limit</button>
+      <button data-clear-key="orbit_chat_img"
+              class="settings-action-btn">Clear image upload counter</button>
+      <button data-clear-key="orbit_session"
+              class="settings-action-btn">Sign out / clear session</button>
+      <button data-clear-all
+              class="settings-action-btn settings-action-danger">Clear all Orbit data</button>
+    </div>` : ''
+
+  const aboutExpanded = isAbout ? `
+    <div class="px-5 pb-5 flex flex-col gap-3">
+      <div class="flex flex-col gap-1.5 px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+        <p class="text-white/70 text-sm font-semibold">OrbitV2 <span class="text-white/30 font-normal">v${APP_VERSION}</span></p>
+        <p class="text-white/30 text-xs">Vite · Tailwind v4 · Firebase RTDB</p>
+      </div>
+      <p class="text-white/25 text-[10px] uppercase tracking-widest px-1">Changelog</p>
+      <ul class="flex flex-col gap-1.5">
+        ${CHANGELOG.map(c => `<li class="text-white/50 text-xs px-4 py-2 rounded-lg bg-white/[0.02] border border-white/[0.05]">· ${c}</li>`).join('')}
+      </ul>
+    </div>` : ''
+
   return `
     ${settingsRowHTML('Appearance',  'Theme & colors',               'appearance',  isAppearance)}
     ${appearanceExpanded}
     ${settingsRowHTML('Performance', 'Stars, blur, motion, glow',    'performance', isPerformance)}
     ${performanceExpanded}
-    ${settingsRowHTML('Privacy',     'History, cookies, tracking')}
-    ${settingsRowHTML('About',       'Version 2.0.0 — OrbitV2')}`
+    ${settingsRowHTML('Privacy',     'Clear data & session',         'privacy',     isPrivacy)}
+    ${privacyExpanded}
+    ${settingsRowHTML('About',       `v${APP_VERSION} · OrbitV2`,    'about',       isAbout)}
+    ${aboutExpanded}`
 }
 
 function settingsRowHTML(title, desc, section = null, isOpen = false) {
   const clickAttr = section ? `data-settings-section="${section}"` : ''
+  const a11yAttrs = section
+    ? `tabindex="0" role="button" aria-expanded="${isOpen}" aria-label="${title}: ${desc}"`
+    : ''
   const chevronCls = isOpen ? 'rotate-90' : ''
   return `
-    <div ${clickAttr}
+    <div ${clickAttr} ${a11yAttrs}
          class="flex items-center justify-between px-5 py-4
                 rounded-2xl bg-white/[0.04] backdrop-blur-lg
                 border border-white/[0.08]
-                ${section ? 'cursor-pointer hover:bg-white/[0.08] hover:border-white/20' : ''}
+                ${section ? 'cursor-pointer hover:bg-white/[0.08] hover:border-white/20 focus:outline-none focus:border-white/40 focus:bg-white/[0.08]' : ''}
                 transition-colors duration-200 select-none">
       <div>
         <p class="text-white/80 text-sm font-medium">${title}</p>
@@ -1436,11 +1728,12 @@ function musicViewHTML() {
 }
 
 function gamesViewHTML() {
-  return `<div class="content-view"><iframe id="games-frame" class="content-frame"></iframe></div>`
+  // Iframe lives persistently at the orbit-root level; this is just a placeholder
+  return `<div class="content-view"></div>`
 }
 
 function tvViewHTML() {
-  return `<div class="content-view"><iframe id="tv-frame" class="content-frame"></iframe></div>`
+  return `<div class="content-view"><iframe id="tv-frame" class="content-frame" sandbox="allow-scripts allow-popups"></iframe></div>`
 }
 
 function chatViewHTML() {
@@ -1472,9 +1765,13 @@ function chatViewHTML() {
   const imgLeft = _IMG_DAY_MAX - _imgUsedToday()
   const chatPanel = `
     <div id="chat-messages" class="chat-feed">
+      <div id="chat-empty-state" class="chat-empty-state">
+        <div class="chat-empty-icon">${icoMsgSquare(40)}</div>
+        <div class="chat-empty-title">No messages yet</div>
+        <div class="chat-empty-sub">Send your first message to start the conversation.</div>
+      </div>
     </div>
     <div class="chat-input-row">
-      <div id="chat-notice" class="chat-notice"></div>
       <form id="chat-form" class="chat-input-wrap">
         <input id="chat-img-file" type="file" accept="image/*" style="display:none">
         <button type="button" id="chat-img-btn" class="chat-img-btn" title="Upload image (${imgLeft} left today)">
@@ -1818,9 +2115,33 @@ function profileViewHTML() {
         </div>
         <div class="text-center">
           <div class="text-white font-bold text-xl tracking-wide">${_escHtml(_accountName)}</div>
-          <div class="text-white/25 text-xs mt-0.5 font-mono">${_escHtml(_authUser.uid.slice(0,8))}…</div>
+          <div class="text-white/25 text-xs mt-0.5">Signed in</div>
         </div>
       </div>
+
+      <!-- Developer Info (collapsible) -->
+      <details id="dev-info" class="bg-white/[0.03] border border-white/[0.07] rounded-2xl">
+        <summary class="px-4 py-3 cursor-pointer select-none text-white/50 text-xs uppercase tracking-widest flex items-center justify-between list-none">
+          <span>Developer Info</span>
+          <span class="dev-info-chevron text-white/30 transition-transform duration-200">${icoChevronRight(14)}</span>
+        </summary>
+        <div class="px-4 pb-3 pt-1 flex flex-col gap-2">
+          <div>
+            <div class="text-white/25 text-[10px] uppercase tracking-widest">UID</div>
+            <div class="flex items-center gap-2 mt-1">
+              <code class="text-white/60 text-[11px] font-mono break-all flex-1">${_escHtml(_authUser.uid)}</code>
+              <button id="dev-uid-copy" type="button"
+                      class="text-white/40 hover:text-white/80 text-[10px] uppercase tracking-widest px-2 py-1 rounded border border-white/10 hover:border-white/30 transition-colors">
+                Copy
+              </button>
+            </div>
+          </div>
+          <div>
+            <div class="text-white/25 text-[10px] uppercase tracking-widest">App version</div>
+            <div class="text-white/60 text-[11px] font-mono mt-1">v${_escHtml(APP_VERSION)}</div>
+          </div>
+        </div>
+      </details>
 
       <!-- Bio -->
       <div class="bg-white/[0.03] border border-white/[0.07] rounded-2xl px-4 py-3">
@@ -1977,9 +2298,45 @@ function syncDockActive() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function bindViewEvents() {
-  if (state.view === 'games') {
-    const frame = document.getElementById('games-frame')
-    if (frame) frame.srcdoc = buildGamesSrcdoc(state.accentRgb)
+  // Toggle persistent games iframe visibility
+  const gamesFrame = document.getElementById('games-frame')
+  const gamesSkel  = document.getElementById('games-skeleton')
+  const mainEl = document.querySelector('main')
+  if (gamesFrame) {
+    if (state.view === 'games') {
+      gamesFrame.classList.add('games-frame-visible')
+      mainEl?.classList.add('games-active')
+      // Show skeleton until iframe content reports ready (applyFilters complete)
+      const showSkel = gamesFrame.dataset.builtAccent !== state.accentRgb
+                    || gamesFrame.dataset.gamesReady !== '1'
+      if (showSkel && gamesSkel) gamesSkel.classList.add('is-visible')
+      // Build srcdoc only once per accent change
+      if (gamesFrame.dataset.builtAccent !== state.accentRgb) {
+        gamesFrame.dataset.gamesReady = '0'
+        gamesFrame.srcdoc = buildGamesSrcdoc(state.accentRgb)
+        gamesFrame.dataset.builtAccent = state.accentRgb
+        gamesFrame.addEventListener('load', () => {
+          if (_pendingGameSearch) {
+            const q = _pendingGameSearch
+            _pendingGameSearch = null
+            gamesFrame.contentWindow?.postMessage({ type: 'orbit-search', query: q }, '*')
+          }
+          try { gamesFrame.contentWindow?.focus() } catch {}
+        }, { once: true })
+      } else {
+        // Already loaded — push pending query (if any) + restore focus
+        if (_pendingGameSearch) {
+          const q = _pendingGameSearch
+          _pendingGameSearch = null
+          gamesFrame.contentWindow?.postMessage({ type: 'orbit-search', query: q }, '*')
+        }
+        try { gamesFrame.contentWindow?.focus() } catch {}
+      }
+    } else {
+      gamesFrame.classList.remove('games-frame-visible')
+      mainEl?.classList.remove('games-active')
+      if (gamesSkel) gamesSkel.classList.remove('is-visible')
+    }
   }
   if (state.view === 'tv') {
     const frame = document.getElementById('tv-frame')
@@ -1987,10 +2344,13 @@ function bindViewEvents() {
   }
 
   if (state.view === 'chat') {
-    // Load messages when in a real channel (global or active DM)
-    if (_chatMode === 'global' || (_chatMode === 'dm' && _chatDmPartner)) {
-      _loadChatMessages()
-    }
+    // Lazy-load Firebase before any chat code runs
+    _ensureFb().then(() => {
+      // Load messages when in a real channel (global or active DM)
+      if (_chatMode === 'global' || (_chatMode === 'dm' && _chatDmPartner)) {
+        _loadChatMessages()
+      }
+    })
 
     // ── Send message ──
     document.getElementById('chat-form')?.addEventListener('submit', e => {
@@ -2112,6 +2472,8 @@ function bindViewEvents() {
       if (errorEl) { errorEl.classList.add('hidden'); errorEl.textContent = '' }
       if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '…' }
       try {
+        // Lazy-load Firebase before any auth call
+        await _ensureFb()
         if (_authMode === 'register') {
           await _registerAccount(username, password)
         } else {
@@ -2147,27 +2509,73 @@ function bindViewEvents() {
       if (btn) btn.innerHTML = _pwVisible ? icoEye(15) : icoEyeOff(15)
     })
 
-    // ── 3D card tilt ─────────────────────────────────────────────────────
+    // ── 3D card tilt — listeners tracked so they can be removed on view change
     const tilt3d = document.getElementById('signin-3d')
     const card3d = document.getElementById('signin-card')
     if (tilt3d && card3d) {
-      tilt3d.addEventListener('mousemove', e => {
+      let _tiltPaused = false
+      const resetTilt = () => {
+        card3d.style.setProperty('--rx', '0deg')
+        card3d.style.setProperty('--ry', '0deg')
+      }
+      const onMove = e => {
+        if (_tiltPaused) return
         const r  = tilt3d.getBoundingClientRect()
         const nx = (e.clientX - r.left  - r.width  / 2) / (r.width  / 2)
         const ny = (e.clientY - r.top   - r.height / 2) / (r.height / 2)
         card3d.style.setProperty('--rx', `${-ny * 10}deg`)
         card3d.style.setProperty('--ry', `${ nx * 10}deg`)
-      })
-      tilt3d.addEventListener('mouseleave', () => {
-        card3d.style.setProperty('--rx', '0deg')
-        card3d.style.setProperty('--ry', '0deg')
-      })
+      }
+      const onLeave = resetTilt
+      const onFocusIn = e => {
+        if (e.target.matches('input, textarea, select, button')) {
+          _tiltPaused = true
+          resetTilt()
+        }
+      }
+      const onFocusOut = e => {
+        if (e.target.matches('input, textarea, select, button')) {
+          _tiltPaused = false
+        }
+      }
+      tilt3d.addEventListener('mousemove', onMove)
+      tilt3d.addEventListener('mouseleave', onLeave)
+      tilt3d.addEventListener('focusin', onFocusIn)
+      tilt3d.addEventListener('focusout', onFocusOut)
+      // Run any prior teardown, register fresh one
+      if (typeof _signinTeardown === 'function') _signinTeardown()
+      _signinTeardown = () => {
+        tilt3d.removeEventListener('mousemove', onMove)
+        tilt3d.removeEventListener('mouseleave', onLeave)
+        tilt3d.removeEventListener('focusin', onFocusIn)
+        tilt3d.removeEventListener('focusout', onFocusOut)
+        _signinTeardown = null
+      }
     }
 
     // ── Signed-in actions ─────────────────────────────────────────────────
     document.getElementById('profile-signout')?.addEventListener('click', async () => {
       await _logoutAccount()
       swapView()
+    })
+
+    // Developer Info — chevron rotate + UID copy
+    const devInfo = document.getElementById('dev-info')
+    devInfo?.addEventListener('toggle', () => {
+      const chev = devInfo.querySelector('.dev-info-chevron')
+      if (chev) chev.style.transform = devInfo.open ? 'rotate(90deg)' : 'rotate(0deg)'
+    })
+    document.getElementById('dev-uid-copy')?.addEventListener('click', async (e) => {
+      e.preventDefault()
+      try {
+        await navigator.clipboard.writeText(_authUser?.uid ?? '')
+        const btn = e.currentTarget
+        const orig = btn.textContent
+        btn.textContent = 'Copied'
+        setTimeout(() => { btn.textContent = orig }, 1500)
+      } catch {
+        _chatShowNotice('Copy failed')
+      }
     })
 
     document.getElementById('auth-username')?.focus()
@@ -2177,13 +2585,18 @@ function bindViewEvents() {
   searchInput?.addEventListener('input', e => {
     setState({ query: e.target.value })
   })
-  // Enter on a URL-shaped string → open through proxy instead of filtering
   searchInput?.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return
     const val = e.target.value.trim()
-    if (!looksLikeUrl(val)) return
-    const url = /^https?:\/\//i.test(val) ? val : `https://${val}`
-    setState({ activeApp: { name: url, url }, query: '' })
+    if (!val) return
+    if (looksLikeUrl(val)) {
+      const url = /^https?:\/\//i.test(val) ? val : `https://${val}`
+      setState({ activeApp: { name: url, url }, query: '' })
+      return
+    }
+    // Non-URL query → switch to games and search there
+    _pendingGameSearch = val
+    setState({ view: 'games', query: '' })
   })
 
   // App card clicks — delegated on grid
@@ -2211,6 +2624,7 @@ function bindViewEvents() {
 
     // Resolve globally-consistent target from RTDB, then start ticker
     ;(async () => {
+      await _ensureFb()
       _cdTarget = await _resolveCountdownTarget('countdown/browser', 'orbit_browser_cd')
       const tick = () => {
         if (!document.getElementById('cd-h')) { clearInterval(_cdInterval); _cdInterval = null; return }
@@ -2274,7 +2688,15 @@ function bindViewEvents() {
   }
 
   // Settings section toggle — delegated on settings body
-  document.getElementById('settings-body')?.addEventListener('click', e => {
+  const settingsBody = document.getElementById('settings-body')
+  settingsBody?.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    const row = e.target.closest('[data-settings-section]')
+    if (!row) return
+    e.preventDefault()
+    row.click()
+  })
+  settingsBody?.addEventListener('click', e => {
     const row = e.target.closest('[data-settings-section]')
     if (row) {
       const section = row.dataset.settingsSection
@@ -2288,6 +2710,26 @@ function bindViewEvents() {
     if (tog) {
       const key = tog.dataset.perfToggle
       setState({ [key]: !state[key] })
+    }
+    const clearBtn = e.target.closest('[data-clear-key]')
+    if (clearBtn) {
+      localStorage.removeItem(clearBtn.dataset.clearKey)
+      if (clearBtn.dataset.clearKey === 'orbit_chat_rate') {
+        localStorage.removeItem(_RATE_LAST_KEY)
+        _chatRateReset()
+      }
+      if (clearBtn.dataset.clearKey === 'orbit_session') {
+        _logoutAccount().then(() => swapView())
+      }
+      clearBtn.textContent = '✓ Cleared'
+      clearBtn.disabled = true
+    }
+    if (e.target.closest('[data-clear-all]')) {
+      // Only wipe Orbit-owned keys — leave other apps on this origin alone
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('orbit_'))
+        .forEach(k => localStorage.removeItem(k))
+      location.reload()
     }
   })
 }
@@ -2307,10 +2749,23 @@ document.addEventListener('keydown', e => {
   if (state.activeApp) closeApp()
 })
 
-// Called by srcdoc iframes via window.parent
-window.__cherriLaunchGame  = game       => showGameOverlay(game)
-window.__cherriLaunchWatch = (id, type) => showWatchOverlay(id, type)
-window.__cherriGoBack      = ()         => setState({ view: 'home' })
+// Receive launch requests from sandboxed srcdoc iframes
+window.addEventListener('message', e => {
+  const d = e.data
+  if (!d || typeof d !== 'object') return
+  // Only honor messages that came from one of our own iframes
+  const ourFrames = ['games-frame', 'tv-frame'].map(id => document.getElementById(id)?.contentWindow)
+  if (!ourFrames.includes(e.source)) return
+  if (d.type === 'orbit-launch-game'  && d.game)   showGameOverlay(d.game)
+  if (d.type === 'orbit-launch-watch' && d.id)     showWatchOverlay(d.id, d.kind)
+  if (d.type === 'orbit-go-back')                  setState({ view: 'home' })
+  if (d.type === 'orbit-games-ready') {
+    const gf = document.getElementById('games-frame')
+    if (gf) gf.dataset.gamesReady = '1'
+    const skel = document.getElementById('games-skeleton')
+    if (skel) skel.classList.remove('is-visible')
+  }
+})
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ONBOARDING
@@ -2331,8 +2786,8 @@ function onboardingHTML() {
 
       <!-- Own slow starfield — solid black bg needs its own stars -->
       <div class="ob-stars-wrap" aria-hidden="true">
-        <div id="ob-stars1"></div>
-        <div id="ob-stars2"></div>
+        <canvas id="ob-stars1" class="stars-canvas ob-stars-canvas-1"></canvas>
+        <canvas id="ob-stars2" class="stars-canvas ob-stars-canvas-2"></canvas>
       </div>
 
       <!-- Step 1: Landing — massive logo, click/key anywhere to continue -->
@@ -2372,10 +2827,8 @@ function initOnboarding() {
 
   // Slow starfield — 2× longer duration than main app
   requestAnimationFrame(() => {
-    const s1 = document.getElementById('ob-stars1')
-    const s2 = document.getElementById('ob-stars2')
-    if (s1) s1.style.boxShadow = starShadows(700, 0.55, '255, 255, 255')
-    if (s2) s2.style.boxShadow = starShadows(220, 0.85, '255, 255, 255')
+    _drawStarLayer(document.getElementById('ob-stars1'), 700, 1, 0.55)
+    _drawStarLayer(document.getElementById('ob-stars2'), 220, 2, 0.85)
   })
 
   // Start pulse after reveal finishes
@@ -2398,10 +2851,19 @@ function initOnboarding() {
     }, 360)
   }
 
-  // Step 1: any click or keypress advances (ignore modifier-only keys)
+  // Step 1: any click or keypress advances (ignore modifier-only keys + chords)
+  const _MODIFIER_KEYS = new Set([
+    'Shift', 'Control', 'Alt', 'Meta',
+    'CapsLock', 'NumLock', 'ScrollLock',
+    'AltGraph', 'Fn', 'FnLock', 'Hyper', 'Super', 'OS', 'ContextMenu',
+  ])
   const onAnyKey = e => {
     if (step !== 1) return
-    if (['Shift','Control','Alt','Meta'].includes(e.key)) return
+    if (_MODIFIER_KEYS.has(e.key)) return
+    // Ignore chorded shortcuts like Ctrl+R, Cmd+Tab, Alt+F4, etc.
+    if (e.ctrlKey || e.altKey || e.metaKey) return
+    // Ignore IME composition events
+    if (e.isComposing || e.keyCode === 229) return
     goTo(2)
   }
   document.addEventListener('keydown', onAnyKey)
@@ -2436,15 +2898,15 @@ function initOnboarding() {
 // STARS
 // ═══════════════════════════════════════════════════════════════════════════
 
-function starShadows(count, alpha, rgb = '255, 255, 255') {
-  const out = []
-  for (let i = 0; i < count; i++) {
-    const x = Math.floor(Math.random() * 2000)
-    const y = Math.floor(Math.random() * 2000)
-    const a = (alpha * (0.55 + Math.random() * 0.45)).toFixed(2)
-    out.push(`${x}px ${y}px rgba(${rgb},${a})`)
-  }
-  return out.join(',')
+async function _loadTagline() {
+  try {
+    const text = await fetch('/OrbitV2/taglines.txt').then(r => r.text())
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+    if (!lines.length) return
+    const pick = lines[Math.floor(Math.random() * lines.length)]
+    const el = document.getElementById('site-tagline')
+    if (el) el.textContent = pick
+  } catch { /* keep default */ }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2454,9 +2916,9 @@ function starShadows(count, alpha, rgb = '255, 255, 255') {
 document.querySelector('#app').innerHTML = `
   <div id="orbit-root">
     <div class="stars-wrap" aria-hidden="true">
-      <div class="stars-layer" id="stars1"></div>
-      <div class="stars-layer" id="stars2"></div>
-      <div class="stars-layer" id="stars3"></div>
+      <canvas id="stars1" class="stars-canvas stars-canvas-1"></canvas>
+      <canvas id="stars2" class="stars-canvas stars-canvas-2"></canvas>
+      <canvas id="stars3" class="stars-canvas stars-canvas-3"></canvas>
     </div>
 
     <main class="relative z-10 flex flex-col items-center justify-center
@@ -2465,6 +2927,22 @@ document.querySelector('#app').innerHTML = `
         ${viewHTML()}
       </div>
     </main>
+
+    <!-- Persistent games iframe — built once, hidden when not in games view -->
+    <iframe id="games-frame" class="games-frame-persistent"
+            sandbox="allow-scripts allow-popups"></iframe>
+
+    <!-- Skeleton loader — shown until applyFilters posts ready signal -->
+    <div id="games-skeleton" aria-hidden="true">
+      <div class="gs-toolbar">
+        <div class="gs-pill"></div>
+        <div class="gs-pill" style="width:140px"></div>
+        <div class="gs-pill" style="width:110px"></div>
+      </div>
+      <div class="gs-grid">
+        ${Array.from({length: 24}, () => '<div class="gs-card"></div>').join('')}
+      </div>
+    </div>
 
     ${dockHTML()}
     ${onboardingHTML()}
@@ -2483,6 +2961,7 @@ requestAnimationFrame(() => {
   const saved = localStorage.getItem('orbit_theme') ?? 'cherry'
   setTheme(saved)
   _applyPerfClasses()
+  _loadTagline()
   // Show What's New if version changed
   const storedVer = localStorage.getItem('orbit_version')
   if (storedVer !== APP_VERSION) showWhatsNew(storedVer)
@@ -2521,9 +3000,21 @@ function icoImage(s)         { return ico('<rect x="3" y="3" width="18" height="
 function icoEye(s)           { return ico('<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>', s) }
 function icoEyeOff(s)        { return ico('<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>', s) }
 
-// Returns true for bare domains ("youtube.com") and full URLs
+// Returns true for bare domains ("youtube.com") and full URLs.
+// Tightened: must be space-free, must end in a recognized TLD (>=2 letters, no digits),
+// rejects pure-numeric labels like "2048.io" being mistaken for files like "game.io".
+const _TLD_RE = /^(com|net|org|io|co|app|dev|gg|tv|me|xyz|site|tech|games|game|fun|fr|de|uk|us|edu|info|page|store|so|ai|sh|ly|to)$/i
 function looksLikeUrl(str) {
-  return /^(https?:\/\/)?[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(str)
+  if (!str || /\s/.test(str)) return false
+  const m = /^(https?:\/\/)?([\w-]+(?:\.[\w-]+)+)(\/\S*)?$/.exec(str)
+  if (!m) return false
+  const host = m[2]
+  // Reject IPs — those should hit the proxy via http(s):// explicitly
+  if (/^[\d.]+$/.test(host)) return /^https?:\/\//i.test(str)
+  // Last label must be a known TLD
+  const labels = host.split('.')
+  const tld = labels[labels.length - 1]
+  return _TLD_RE.test(tld)
 }
 
 function brand(d, s) {
